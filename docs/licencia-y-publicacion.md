@@ -56,11 +56,12 @@ Después, en GitHub: **Add file → Create new file → nombre `LICENSE` → "Ch
 
 ---
 
-## Estado
+## Estado — ✅ CUMPLIDO
 
 - ✅ Secretos fuera del versionado + `docker.ini` limpio.
 - ✅ **Repo público publicado:** https://github.com/Tatobregon/GridEbano (LICENSE AGPL-3.0, branch `main`).
-- ⏳ Recomendado (opcional): link visible a la fuente en la app ("Acerca de" / `aboutView.vue`) + rebuild.
+- ✅ **Link a la fuente en la app**: en "Acerca de", apunta al repo (patch `scripts/patch-about-link.js`,
+  aplicado en `Dockerfile.frontend`).
 
-El requisito central de AGPL (**fuente disponible para los usuarios**) ya está **cumplido** con el
-repo público. El link in-app es un extra para que sea más fácil de encontrar.
+AGPL-3.0 cumplido: la fuente correspondiente está públicamente disponible y ofrecida a los usuarios
+desde la propia app.

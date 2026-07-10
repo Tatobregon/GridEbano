@@ -231,8 +231,8 @@ cache-busting del service worker; bloqueo de registro en couch-auth.
 - [x] **Proceso de parcheo** — `scripts/parchear.sh` + `docs/procedimiento-parcheo.md` (probado).
 - [x] **Backups offsite** — `scripts/backup-offsite.sh` copia a Google Drive (probado).
 - [x] **Política de contraseñas olvidadas** — modelo "admin custodia" en `docs/politica-contrasenas.md`.
-- [x] **AGPL: preparación** — secretos movidos a `.env` (no versionado); `docs/licencia-y-publicacion.md`.
-      *Falta (acción del admin, una vez):* crear el repo público + link a la fuente en la app.
+- [x] **AGPL: CUMPLIDO** — secretos en `.env`; repo público https://github.com/Tatobregon/GridEbano
+      (LICENSE AGPL-3.0); link a la fuente visible en la pantalla "Acerca de" de la app.
 
 **Mediano plazo (producción real, con clientes) — TRACK B:**
 - [ ] Migrar a un **servidor 24/7** (VPS) + **dominio propio**.

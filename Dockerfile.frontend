@@ -39,6 +39,10 @@ RUN sed -i "s/retry: false/retry: true/g" src/js/service/data/pouchDbAdapter.js
 # bundle viejo). Versionamos el nombre del cache con ASTERICS_VERSION → cada build cambia el SW.
 RUN sed -i "s/APP_CACHE_NAME = \"app-cache\"/APP_CACHE_NAME = \"app-cache-${ASTERICS_VERSION}\"/" serviceWorker.js
 
+# (1e) AGPL: link visible al código fuente de ESTA versión modificada en la pantalla "Acerca de".
+COPY scripts/patch-about-link.js /tmp/patch-about-link.js
+RUN node /tmp/patch-about-link.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
