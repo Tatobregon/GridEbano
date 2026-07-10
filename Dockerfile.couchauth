@@ -1,0 +1,12 @@
+FROM node:18-bullseye
+ARG ASTERICS_TAG
+WORKDIR /app
+RUN git clone https://github.com/asterics/AsTeRICS-Grid.git . \
+    && git checkout "tags/${ASTERICS_TAG}"
+# El repo upstream no commitea package-lock.json → `npm ci` falla. Usamos `npm install`.
+RUN npm install
+# Bloquear el registro público: /auth/register solo pasa con el header X-Register-Secret correcto.
+COPY scripts/patch-couchauth.js /tmp/patch-couchauth.js
+RUN node /tmp/patch-couchauth.js
+EXPOSE 3000
+CMD ["node", "superlogin/start.js"]

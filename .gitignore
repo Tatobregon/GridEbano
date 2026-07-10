@@ -1,0 +1,13 @@
+# Secretos — NUNCA subir al repo
+.env
+.env.local
+
+# Backups (datos de usuarios) — no van al repo
+backups/
+*.tgz
+
+# Log de parcheos (local)
+avances/parcheos.log
+
+# Logs transitorios de build/ejecución
+*.log

@@ -1,0 +1,58 @@
+services:
+  couchdb:
+    image: couchdb:3.4
+    restart: unless-stopped
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD}   # definido en .env (no versionado)
+    ports:
+      - "127.0.0.1:5984:5984"   # solo local (admin); al público llega vía nginx /couchdb/
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+      # SIN :ro a propósito. El entrypoint de couchdb hace `find /opt/couchdb -exec chown`
+      # y, en bind-mounts de Windows, el archivo aparece como root; con :ro el chown falla en
+      # un FS read-only, el find devuelve !=0 y `set -e` mata el arranque (exit 1, sin logs).
+      # Nombre 00-* para que ordene ANTES que el docker.ini del entrypoint: así CouchDB persiste su
+      # estado de runtime (hash del admin) en ESE archivo efímero y NO en el nuestro, que queda limpio.
+      - ./couchdb-config/docker.ini:/opt/couchdb/etc/local.d/00-custom.ini
+
+  couch-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.couchauth
+      args:
+        ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
+    restart: unless-stopped
+    environment:
+      DB_SERVER_PUBLIC_URL: https://pc-tato.taila78f74.ts.net/couchdb/   # el NAVEGADOR sincroniza acá (nginx → couchdb)
+      DB_SERVER_PROTOCOL: http://
+      DB_SERVER_HOST: couchdb:5984                   # lo que usa couch-auth interno
+      DB_SERVER_USER: admin
+      DB_SERVER_PASSWORD: ${COUCHDB_PASSWORD}   # misma clave admin (definida en .env)
+      CAUTH_USER_DB: auth-users
+      CAUTH_COUCH_AUTH_DB: _users
+      # Secreto para crear usuarios: /auth/register solo funciona con este valor en X-Register-Secret.
+      # El público no lo tiene → no puede registrarse. El admin lo usa vía scripts/crear-usuario.sh.
+      REGISTER_SECRET: ${REGISTER_SECRET}   # definido en .env (no versionado)
+    ports:
+      - "127.0.0.1:3000:3000"   # solo local (crear-usuario.sh); al público llega vía nginx /auth/
+    depends_on: [couchdb]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
+        AUTH_BASE_URL: "https://pc-tato.taila78f74.ts.net"
+        ASTERICS_VERSION: "localdev-5"
+        # Repo de tableros self-hosteado, pineado a un commit (desacople total de asterics.github.io).
+        # Para actualizar los tableros: cambiar este SHA y rebuildear el frontend.
+        BOARDS_COMMIT: "6c0f0017fd45ebc579cbd79b33eb8f57433cc646"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9095:80"   # el Funnel (local) apunta acá; no hace falta exponer en la LAN
+    depends_on: [couch-auth]
+
+volumes:
+  couchdb-data:
