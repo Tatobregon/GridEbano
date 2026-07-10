@@ -27,26 +27,24 @@ upstream por tag/commit), se cumple con "poner la fuente a disposición".
 
 ## Checklist para publicar (una sola vez)
 
-**1. Sacar secretos y datos** (ya preparado):
+**1. Sacar secretos y datos** — ✅ HECHO:
 - [x] Secretos movidos a `.env` (no se versiona). Se publica `.env.example` como plantilla.
-- [x] `.gitignore` excluye `.env`, `.env.local`, `backups/`, `*.tgz`, `avances/parcheos.log`.
-- [ ] **Limpiar `couchdb-config/docker.ini`**: borrar las secciones `[admins]` (hash) y la línea
-      `uuid = ...` antes de publicar. Son estado de runtime, no fuente. (CouchDB las regenera solo.)
-- [ ] Revisar que la URL `pc-tato.taila78f74.ts.net` que quede en el repo no te moleste (no es un
-      secreto, pero es tu hostname; opcional parametrizarla).
+- [x] `.gitignore` excluye `.env`, `.env.local`, `backups/`, `*.tgz`, `*.log`, `avances/parcheos.log`.
+- [x] `couchdb-config/docker.ini` **ya queda limpio solo**: se monta como `00-custom.ini` (ordena
+      antes que el docker.ini del entrypoint), así CouchDB persiste su `[admins]` en el archivo
+      efímero, no en el nuestro. Verificado: nuestro archivo no vuelve a tener `[admins]`.
+- [x] `git init` + commit inicial **ya hecho localmente**, verificado sin secretos (23 archivos).
 
-**2. Crear el repo público:**
+**2. Crear el repo público y pushear** (acción del admin):
 ```bash
+# En GitHub: crear un repo PÚBLICO VACÍO (sin README, sin license, sin gitignore).
 cd "asterics-grid"
-git init
-git add .
-git commit -m "AsTeRICS Grid self-hosted (modificaciones AGPL)"
-# crear un repo en GitHub y:
-git remote add origin https://github.com/<tu-usuario>/<tu-repo>.git
 git branch -M main
-git push -u origin main
+git remote add origin https://github.com/<TU-USUARIO>/<TU-REPO>.git
+git push -u origin main   # puede pedir login de GitHub
 ```
-> Antes del primer `git add .`, verificá con `git status` que **NO** aparezcan `.env` ni `backups/`.
+Después, en GitHub: **Add file → Create new file → nombre `LICENSE` → "Choose a license template"
+→ "GNU Affero General Public License v3.0"** (GitHub pega el texto completo).
 
 **3. Ofrecer la fuente a los usuarios (recomendado):**
 - Agregar un **link visible al repo** en la app (ej. en la pantalla "Acerca de" / `aboutView.vue`),
@@ -60,7 +58,9 @@ git push -u origin main
 
 ## Estado
 
-- ✅ Preparación técnica para publicar (secretos fuera del versionado).
-- ⏳ Pendiente: limpiar `docker.ini`, crear el repo público, y agregar el link a la fuente en la app.
+- ✅ Secretos fuera del versionado + `docker.ini` limpio.
+- ✅ **Repo público publicado:** https://github.com/Tatobregon/GridEbano (LICENSE AGPL-3.0, branch `main`).
+- ⏳ Recomendado (opcional): link visible a la fuente en la app ("Acerca de" / `aboutView.vue`) + rebuild.
 
-Es un paso **de una sola vez**, y conviene cerrarlo **antes** de tener clientes reales usando el servicio.
+El requisito central de AGPL (**fuente disponible para los usuarios**) ya está **cumplido** con el
+repo público. El link in-app es un extra para que sea más fácil de encontrar.
