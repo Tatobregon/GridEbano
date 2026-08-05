@@ -43,6 +43,11 @@ RUN sed -i "s/APP_CACHE_NAME = \"app-cache\"/APP_CACHE_NAME = \"app-cache-${ASTE
 COPY scripts/patch-about-link.js /tmp/patch-about-link.js
 RUN node /tmp/patch-about-link.js
 
+# (1f) Limpieza: elimina la última referencia (muerta) a la fundación en el service worker
+# (check de cacheo de tableros) y lo corrige a same-origin. Desacople total, hasta en código muerto.
+COPY scripts/patch-sw-boards-check.js /tmp/patch-sw-boards-check.js
+RUN node /tmp/patch-sw-boards-check.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
