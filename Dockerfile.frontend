@@ -48,6 +48,11 @@ RUN node /tmp/patch-about-link.js
 COPY scripts/patch-sw-boards-check.js /tmp/patch-sw-boards-check.js
 RUN node /tmp/patch-sw-boards-check.js
 
+# (1g) Desacople TOTAL: neutraliza las 2 features opcionales que llamaban a la fundación
+# (podcast + CORS-proxy) → apuntan a un 404 same-origin y degradan solas. Cero refs a la fundación.
+COPY scripts/patch-remove-foundation-features.js /tmp/patch-remove-foundation-features.js
+RUN node /tmp/patch-remove-foundation-features.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
