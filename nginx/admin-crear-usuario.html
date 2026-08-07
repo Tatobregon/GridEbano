@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Crear usuario — Ébano Soluciones</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex;
+         align-items: center; justify-content: center; padding: 20px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 14px;
+          padding: 32px 28px; width: 100%; max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  .sub { color: #94a3b8; font-size: .85rem; margin: 0 0 24px; }
+  label { display: block; font-size: .82rem; color: #cbd5e1; margin: 14px 0 6px; }
+  input { width: 100%; padding: 11px 12px; border-radius: 9px; border: 1px solid #475569;
+          background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+  input:focus { outline: none; border-color: #38bdf8; }
+  button { width: 100%; margin-top: 22px; padding: 12px; border: 0; border-radius: 9px;
+           background: #38bdf8; color: #0f172a; font-weight: 600; font-size: 1rem; cursor: pointer; }
+  button:hover { background: #0ea5e9; }
+  button:disabled { opacity: .5; cursor: default; }
+  .msg { margin-top: 16px; font-size: .88rem; padding: 10px 12px; border-radius: 8px; display: none; }
+  .msg.ok { display: block; background: #064e3b; color: #6ee7b7; }
+  .msg.err { display: block; background: #4c0519; color: #fda4af; }
+  .hint { color: #64748b; font-size: .72rem; margin-top: 4px; }
+  #step2 { display: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Crear usuario</h1>
+    <p class="sub">Ébano Soluciones — panel de administración</p>
+
+    <!-- Paso 1: clave de acceso -->
+    <div id="step1">
+      <label for="access">Clave de acceso</label>
+      <input id="access" type="password" autocomplete="off" autofocus>
+      <button id="btnAccess">Entrar</button>
+      <div id="msg1" class="msg"></div>
+    </div>
+
+    <!-- Paso 2: crear usuario -->
+    <div id="step2">
+      <label for="username">Usuario</label>
+      <input id="username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <div class="hint">minúsculas, números, _ o - · 3 a 16 caracteres</div>
+      <label for="password">Contraseña</label>
+      <input id="password" type="text" autocomplete="off">
+      <div class="hint">mínimo 8 caracteres · anotala en un lugar seguro</div>
+      <button id="btnCreate">Crear usuario</button>
+      <div id="msg2" class="msg"></div>
+    </div>
+  </div>
+
+<script>
+  let accessPassword = "";
+  const $ = id => document.getElementById(id);
+  const show = (el, text, ok) => { el.className = "msg " + (ok ? "ok" : "err"); el.textContent = text; };
+
+  $("btnAccess").addEventListener("click", async () => {
+    const pw = $("access").value;
+    if (!pw) return;
+    $("btnAccess").disabled = true;
+    try {
+      const r = await fetch("/admin/verificar", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessPassword: pw })
+      });
+      if (r.ok) {
+        accessPassword = pw;
+        $("step1").style.display = "none";
+        $("step2").style.display = "block";
+        $("username").focus();
+      } else {
+        show($("msg1"), "Clave de acceso incorrecta.", false);
+      }
+    } catch (e) {
+      show($("msg1"), "No se pudo conectar con el servidor.", false);
+    }
+    $("btnAccess").disabled = false;
+  });
+  $("access").addEventListener("keydown", e => { if (e.key === "Enter") $("btnAccess").click(); });
+
+  $("btnCreate").addEventListener("click", async () => {
+    const username = $("username").value.trim();
+    const password = $("password").value;
+    if (!username || !password) { show($("msg2"), "Completá usuario y contraseña.", false); return; }
+    if (password.length < 8) { show($("msg2"), "La contraseña debe tener al menos 8 caracteres.", false); return; }
+    $("btnCreate").disabled = true;
+    try {
+      const r = await fetch("/admin/crear-usuario", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessPassword, username, password })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.success) {
+        show($("msg2"), "✅ Usuario \"" + username + "\" creado. ¡Anotá la contraseña!", true);
+        $("username").value = ""; $("password").value = "";
+      } else {
+        let m = data.error || (data.validationErrors ? JSON.stringify(data.validationErrors) : "No se pudo crear el usuario.");
+        if (/already in use|exists/i.test(JSON.stringify(data))) m = "Ese usuario ya existe.";
+        show($("msg2"), "⚠️ " + m, false);
+      }
+    } catch (e) {
+      show($("msg2"), "No se pudo conectar con el servidor.", false);
+    }
+    $("btnCreate").disabled = false;
+  });
+  $("password").addEventListener("keydown", e => { if (e.key === "Enter") $("btnCreate").click(); });
+</script>
+</body>
+</html>

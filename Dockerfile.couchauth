@@ -8,5 +8,8 @@ RUN npm install
 # Bloquear el registro público: /auth/register solo pasa con el header X-Register-Secret correcto.
 COPY scripts/patch-couchauth.js /tmp/patch-couchauth.js
 RUN node /tmp/patch-couchauth.js
+# Endpoints de la página de admin para crear usuarios (gated por ADMIN_UI_PASSWORD; secreto server-side).
+COPY scripts/patch-admin-endpoints.js /tmp/patch-admin-endpoints.js
+RUN node /tmp/patch-admin-endpoints.js
 EXPOSE 3000
 CMD ["node", "superlogin/start.js"]

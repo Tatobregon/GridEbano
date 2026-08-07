@@ -71,3 +71,5 @@ COPY --from=build /src/ /usr/share/nginx/html/
 COPY --from=boards /boards/ /usr/share/nginx/html/Asterics-AAC-Data/
 # Config de nginx como puerta única (reverse-proxy de couch-auth y couchdb + security headers).
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+# Página de admin para crear usuarios (servida en /crear-usuario-ebano-soluciones).
+COPY nginx/admin-crear-usuario.html /usr/share/nginx/html/admin-crear-usuario.html

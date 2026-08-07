@@ -34,6 +34,7 @@ services:
       # Secreto para crear usuarios: /auth/register solo funciona con este valor en X-Register-Secret.
       # El público no lo tiene → no puede registrarse. El admin lo usa vía scripts/crear-usuario.sh.
       REGISTER_SECRET: ${REGISTER_SECRET}   # definido en .env (no versionado)
+      ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD}   # clave de acceso a la página de admin (en .env)
     ports:
       - "127.0.0.1:3000:3000"   # solo local (crear-usuario.sh); al público llega vía nginx /auth/
     depends_on: [couchdb]
@@ -45,7 +46,7 @@ services:
       args:
         ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
         AUTH_BASE_URL: "https://pc-tato.taila78f74.ts.net"
-        ASTERICS_VERSION: "localdev-8"
+        ASTERICS_VERSION: "localdev-9"
         # Repo de tableros self-hosteado, pineado a un commit (desacople total de asterics.github.io).
         # Para actualizar los tableros: cambiar este SHA y rebuildear el frontend.
         BOARDS_COMMIT: "6c0f0017fd45ebc579cbd79b33eb8f57433cc646"
