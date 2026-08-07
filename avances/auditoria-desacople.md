@@ -49,6 +49,14 @@ Búsqueda de pictogramas: **ARASAAC** (`api.arasaac.org`) y un CDN (`d18vdu4p71y
 Global/Open Symbols). YouTube/Google, radio, Matrix. El SW cachea imágenes de esas APIs para offline.
 Son dependencias de **features de terceros**, no de la fundación.
 
-## Pendiente opcional (decisión de producto)
-Para llegar a **cero referencias a la fundación en absoluto**, se pueden **neutralizar** las 2 features
-opcionales (podcast y CORS-proxy) — es quitar features, así que es decisión del admin.
+## Neutralización de features opcionales — ✅ HECHO
+Se **neutralizaron** las 2 features que llamaban a la fundación (podcast + CORS-proxy):
+apuntan a `/_feature_deshabilitada` (nginx responde 404 same-origin) y degradan solas sin romper
+(patch `scripts/patch-remove-foundation-features.js`). Verificado: **0 URLs de fetch a la fundación**
+en el código servido. Lo único que queda es `mailto:office@asterics-foundation.org` (×2), un link de
+**contacto/atribución** que NO es un request de red (no aparece en el Network tab del navegador).
+
+## Estado final: ✅ DESACOPLE TOTAL
+Cero llamadas de red posibles a la fundación. El servicio funciona 100% aunque la fundación
+desaparezca de internet. Confirmación en vivo: DevTools → Network, filtrar `asterics-foundation` y
+`asterics.github.io` mientras se usa la app → 0 requests.
