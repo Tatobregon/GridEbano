@@ -1,0 +1,7 @@
+# Scripts de shell: SIEMPRE LF. Se ejecutan en Linux (servidor); CRLF rompe el shebang
+# ("/bin/bash^M: bad interpreter"). Esto lo garantiza sin importar el core.autocrlf de cada uno.
+*.sh text eol=lf
+
+# Config e imágenes que se sirven/ejecutan en Linux: LF por consistencia.
+*.conf text eol=lf
+Dockerfile* text eol=lf
