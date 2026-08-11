@@ -2,6 +2,16 @@ services:
   couchdb:
     image: couchdb:3.4
     restart: unless-stopped
+    # Healthcheck: couch-auth NO debe arrancar hasta que couchdb responda /_up (listo). Sin esto,
+    # en el arranque couch-auth le pega a couchdb antes de tiempo -> ECONNREFUSED -> crashea en loop
+    # -> cambia de IP -> nginx (que ya la resolvió) queda apuntando a la IP muerta -> 502 en el login.
+    # /_up es público (sin auth) y devuelve 200 cuando el nodo está operativo. curl existe en la imagen.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5984/_up"]
+      interval: 5s
+      timeout: 5s
+      retries: 24        # hasta ~2 min de margen para que couchdb levante
+      start_period: 15s
     environment:
       COUCHDB_USER: admin
       COUCHDB_PASSWORD: ${COUCHDB_PASSWORD}   # definido en .env (no versionado)
@@ -24,7 +34,7 @@ services:
         ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
     restart: unless-stopped
     environment:
-      DB_SERVER_PUBLIC_URL: https://pc-tato.taila78f74.ts.net/couchdb/   # el NAVEGADOR sincroniza acá (nginx → couchdb)
+      DB_SERVER_PUBLIC_URL: ${DB_SERVER_PUBLIC_URL}   # el NAVEGADOR sincroniza acá (nginx → couchdb). Por entorno, en .env
       DB_SERVER_PROTOCOL: http://
       DB_SERVER_HOST: couchdb:5984                   # lo que usa couch-auth interno
       DB_SERVER_USER: admin
@@ -37,7 +47,9 @@ services:
       ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD}   # clave de acceso a la página de admin (en .env)
     ports:
       - "127.0.0.1:3000:3000"   # solo local (crear-usuario.sh); al público llega vía nginx /auth/
-    depends_on: [couchdb]
+    depends_on:
+      couchdb:
+        condition: service_healthy   # espera el healthcheck: NO arranca hasta que couchdb esté listo
 
   frontend:
     build:
@@ -45,8 +57,8 @@ services:
       dockerfile: Dockerfile.frontend
       args:
         ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
-        AUTH_BASE_URL: "https://pc-tato.taila78f74.ts.net"
-        ASTERICS_VERSION: "localdev-10"
+        AUTH_BASE_URL: "${AUTH_BASE_URL}"   # URL pública del sitio (se hornea en el bundle). Por entorno, en .env
+        ASTERICS_VERSION: "localdev-11"
         # Repo de tableros self-hosteado, pineado a un commit (desacople total de asterics.github.io).
         # Para actualizar los tableros: cambiar este SHA y rebuildear el frontend.
         BOARDS_COMMIT: "6c0f0017fd45ebc579cbd79b33eb8f57433cc646"
