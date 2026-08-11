@@ -53,6 +53,12 @@ RUN node /tmp/patch-sw-boards-check.js
 COPY scripts/patch-remove-foundation-features.js /tmp/patch-remove-foundation-features.js
 RUN node /tmp/patch-remove-foundation-features.js
 
+# (1h) App SOLO-LOGIN: quita de la UI toda opción de crear usuarios (registro online + usuario
+# offline). Las cuentas las crea SOLO el admin (página /crear-usuario-ebano-soluciones). Neutraliza
+# también las rutas #register/#add/#welcome → renderizan el login (defensa en profundidad).
+COPY scripts/patch-remove-register-ui.js /tmp/patch-remove-register-ui.js
+RUN node /tmp/patch-remove-register-ui.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
