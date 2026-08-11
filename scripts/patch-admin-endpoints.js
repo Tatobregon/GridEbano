@@ -7,6 +7,14 @@ const fs = require('fs');
 const file = 'superlogin/start.js';
 let s = fs.readFileSync(file, 'utf8');
 
+// NOTA CLAVE (bug de login resuelto 2026-08-11): la app del Grid NO manda la contraseña en texto
+// plano. En loginService.loginPlainPassword hashea la clave con
+//   encryptionService.getUserPasswordHash(pw) = sha256_hex('STATIC_USER_PW_SALT' + pw)
+// (ver src/js/service/data/encryptionService.js) y manda ESE hash tanto al registrar como al
+// loguear. Por eso, al crear un usuario desde el admin hay que guardar el MISMO hash; si guardáramos
+// la clave plana, el login de la app (que manda el hash) nunca matchea -> "usuario o contraseña
+// incorrectos". El salt 'STATIC_USER_PW_SALT' es la string literal (constante del upstream).
+
 const anchor = "app.use('/api/infotree', infoTreeAPI.getRouter(config.dbServer.protocol, config.dbServer.host));";
 if (!s.includes(anchor)) {
     console.error('patch-admin-endpoints: ANCHOR no encontrado en start.js. Abortando build.');
@@ -30,11 +38,18 @@ app.post('/admin/crear-usuario', async (req, res) => {
     if (!b.username || !b.password) {
         return res.status(400).json({ error: 'Faltan usuario o contraseña' });
     }
+    if (String(b.password).length < 8) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+    // Hasheamos la clave IGUAL que la app (sha256 de 'STATIC_USER_PW_SALT' + clave) y guardamos ESE
+    // hash. Así el login de la app (que manda el mismo hash) matchea. Ver nota al inicio del archivo.
+    const require_crypto = require('crypto');
+    const hashedPw = require_crypto.createHash('sha256').update('STATIC_USER_PW_SALT' + String(b.password), 'utf8').digest('hex');
     try {
         const r = await fetch('http://127.0.0.1:3000/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Register-Secret': process.env.REGISTER_SECRET },
-            body: JSON.stringify({ username: b.username, email: (b.email || (b.username + '@local.invalid')), password: b.password, confirmPassword: b.password })
+            body: JSON.stringify({ username: b.username, email: (b.email || (b.username + '@local.invalid')), password: hashedPw, confirmPassword: hashedPw })
         });
         const text = await r.text();
         return res.status(r.status).type('application/json').send(text);
