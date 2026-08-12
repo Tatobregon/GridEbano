@@ -65,6 +65,11 @@ RUN node /tmp/patch-remove-register-ui.js
 COPY scripts/patch-hover-clock.js /tmp/patch-hover-clock.js
 RUN node /tmp/patch-hover-clock.js
 
+# (1j) Re-marca EBANO: logo de la empresa en el header/favicon/PWA, manteniendo "by AsTeRICS Grid"
+# como atribución de autoría (AGPL). Los archivos de imagen se copian abajo, en la etapa final.
+COPY scripts/patch-branding.js /tmp/patch-branding.js
+RUN node /tmp/patch-branding.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
@@ -79,6 +84,11 @@ RUN npx webpack --config webpack.config.js --env production \
 
 FROM nginx:1.27-alpine
 COPY --from=build /src/ /usr/share/nginx/html/
+# Logos de EBANO (referenciados por el header/manifest/favicon ya parcheados en la etapa build).
+COPY branding/ebano-logo.png                /usr/share/nginx/html/app/img/ebano-logo.png
+COPY branding/ebano-icon-512.png            /usr/share/nginx/html/app/img/ebano-icon-512.png
+COPY branding/ebano-icon-maskable-512.png   /usr/share/nginx/html/app/img/ebano-icon-maskable-512.png
+COPY branding/ebano-favicon-96.png          /usr/share/nginx/html/app/img/ebano-favicon-96.png
 # Mirror self-hosted del repo de tableros, servido same-origin en /Asterics-AAC-Data/
 COPY --from=boards /boards/ /usr/share/nginx/html/Asterics-AAC-Data/
 # Config de nginx como puerta única (reverse-proxy de couch-auth y couchdb + security headers).

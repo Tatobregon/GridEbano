@@ -5,3 +5,8 @@
 # Config e imágenes que se sirven/ejecutan en Linux: LF por consistencia.
 *.conf text eol=lf
 Dockerfile* text eol=lf
+
+# Imágenes: binarias (que git NO les toque los fines de línea → no se corrompen).
+*.png binary
+*.jpg binary
+*.ico binary
