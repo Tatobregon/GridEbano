@@ -58,7 +58,7 @@ services:
       args:
         ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
         AUTH_BASE_URL: "${AUTH_BASE_URL}"   # URL pública del sitio (se hornea en el bundle). Por entorno, en .env
-        ASTERICS_VERSION: "localdev-11"
+        ASTERICS_VERSION: "localdev-13"
         # Repo de tableros self-hosteado, pineado a un commit (desacople total de asterics.github.io).
         # Para actualizar los tableros: cambiar este SHA y rebuildear el frontend.
         BOARDS_COMMIT: "6c0f0017fd45ebc579cbd79b33eb8f57433cc646"

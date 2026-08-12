@@ -59,6 +59,12 @@ RUN node /tmp/patch-remove-foundation-features.js
 COPY scripts/patch-remove-register-ui.js /tmp/patch-remove-register-ui.js
 RUN node /tmp/patch-remove-register-ui.js
 
+# (1i) Indicador visual de dwell: al posar el mouse sobre un elemento (hovering/"superposición"),
+# un círculo se va llenando (tipo reloj) durante el tiempo de dwell hasta que se dispara el click.
+# Puro CSS, enganchado al ciclo de vida existente de hovering.js. Ver scripts/patch-hover-clock.js.
+COPY scripts/patch-hover-clock.js /tmp/patch-hover-clock.js
+RUN node /tmp/patch-hover-clock.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
