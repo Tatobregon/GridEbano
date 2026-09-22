@@ -1,526 +1,606 @@
-# AsTeRICS Grid — Runbook de auto-hospedaje (Cloud Server DonWeb)
+# Despliegue en producción — Cloud Server de DonWeb (paso a paso)
 
-Guía paso a paso para clonar y servir una versión **congelada y estable** de AsTeRICS Grid en tu propio servidor, con sincronización online (CouchDB + couch-auth) y backups controlados por vos.
+Guía para pasar la app de la PC (Tailscale Funnel) a un servidor propio en DonWeb, con dominio,
+HTTPS, la base de datos en el server y backups en dos capas (locales + Copias de Seguridad de DonWeb). Está pensada para ir
+**de a poco**: cada paso dice qué hacés, el comando exacto, **qué tenés que ver** y **qué hacer si
+no pasa eso**. No avances de paso si el anterior no dio lo esperado.
 
-- **Release pineado:** `release-2026-06-03-09.11/+0200` (último estable al momento de armar esto)
-- **Stack:** Docker + Docker Compose → CouchDB · couch-auth · nginx (frontend) · Caddy (reverse proxy + HTTPS automático)
-- **SO recomendado en DonWeb:** Ubuntu 24.04 LTS
+> **La app no cambia.** Lo que ven los usuarios (logo, reloj de dwell, solo-login, tableros propios)
+> es exactamente lo mismo. Lo que cambia es la infraestructura alrededor: HTTPS con Caddy, nginx
+> más cerrado, imágenes base con parches, dependencias congeladas y scripts que andan en Linux.
 
-> **Convención:** en toda la guía reemplazá `tudominio.com` por tu dominio real. Las contraseñas de ejemplo (`CAMBIAME...`) **tenés que cambiarlas**.
+**Convenciones de esta guía**
+- `app.tudominio.com.ar` = tu subdominio real. `TU.IP` = la IP pública del server.
+- **[PC]** = en tu PC, en **Git Bash**, parado en la carpeta del proyecto.
+- **[SERVER]** = conectado al server por SSH, parado en `/opt/asterics-grid`.
+- Para pegar en Git Bash: clic derecho → Paste (o `Shift+Insert`).
 
----
-
-## 0. Arquitectura de un vistazo
-
-```
-                          Internet (HTTPS 443)
-                                  │
-                          ┌───────▼────────┐
-                          │     Caddy      │  ← TLS automático (Let's Encrypt)
-                          └───┬───┬────┬───┘
-        grid.tudominio.com ───┘   │    └─── db.tudominio.com
-        auth.tudominio.com ───────┘
-            │                │              │
-     ┌──────▼─────┐   ┌──────▼──────┐  ┌────▼──────┐
-     │  frontend  │   │  couch-auth │  │  CouchDB  │
-     │  (nginx)   │   │  (node:3000)│  │  (:5984)  │
-     │ app estát. │   └──────┬──────┘  └────┬──────┘
-     └────────────┘          │ admin        │ volumen
-                             └──────────────┤ couchdb-data
-                                            │ (/opt/couchdb/data)
-                                            ▼
-                                      BACKUPS (tar nocturno)
-```
-
-**Flujo:** el navegador carga el frontend desde `grid.…`, se autentica contra `auth.…` (couch-auth), y la librería PouchDB del navegador sincroniza directamente contra la base personal del usuario en `db.…` (CouchDB). Los datos van **cifrados de extremo a extremo**: ni vos como admin podés leerlos, pero **sí podés restaurarlos** desde un snapshot porque la contraseña del usuario no cambia.
+**Tiempo total estimado:** 3 a 4 horas repartidas, más lo que tarde en propagar el DNS.
 
 ---
 
-## 1. Prerequisitos
+## Cómo queda armado
 
-1. Un **Cloud Server** de DonWeb con Ubuntu 24.04 y acceso root (SSH).
-2. Un **dominio** registrado y con acceso a su zona DNS.
-3. Puertos **80** y **443** abiertos en el firewall del server (los únicos que exponemos).
+```
+ Navegador ──HTTPS──► Caddy (puertos 80/443, certificado automático de Let's Encrypt)
+                        │
+                        ▼
+                      nginx (frontend) = puerta única, solo accesible desde adentro
+                        ├── /                → la app + mirror de tableros
+                        ├── /auth/login, /auth/logout, /auth/refresh → couch-auth
+                        ├── /admin/ + /crear-usuario-ebano-soluciones → panel de alta de usuarios
+                        └── /couchdb/<base del usuario> → CouchDB (sync)
+                                                         │
+                                                  volumen asterics-grid_couchdb-data
+                                                         │
+                            backup nocturno (.tgz en backups/)
+                                          └──► lo levanta la Copia de Seguridad de DonWeb
+```
 
-Conectate por SSH e instalá Docker:
+Solo Caddy da a internet. CouchDB, couch-auth y nginx están atados a `127.0.0.1` del server.
+
+---
+
+## Fase 0 — Qué tenés que tener a mano
+
+- [ ] Tu gestor de contraseñas abierto (vas a guardar varias claves nuevas).
+- [ ] El zip con los cambios (`GridEbano-actualizado.zip`).
+- [ ] Acceso al panel de DonWeb (para contratar el server).
+- [ ] Acceso al panel DNS de tu dominio (DonWeb u otro).
+- [ ] Un mail para los avisos de Let's Encrypt.
+
+---
+
+## Fase 1 — [PC] Poner los cambios en el repo y probarlos en local (~45 min)
+
+La idea es probar todo en tu PC **antes** de tocar el server: si algo del build nuevo falla, que
+falle acá.
+
+### 1.1 Sacar los lockfiles de las imágenes que hoy funcionan
+
+**Por qué:** el `npm install` de antes elegía las versiones de las dependencias el día del build.
+Ahora las congelamos, y las mejores versiones para congelar son las que ya probaste. Están adentro
+de las imágenes que tenés corriendo. Hacelo **antes** de copiar mis archivos.
 
 ```bash
-# Como root
-apt update && apt -y upgrade
-curl -fsSL https://get.docker.com | sh
-# Verificá
-docker --version
-docker compose version
+export MSYS_NO_PATHCONV=1
+./scripts/arrancar.sh            # si el stack no estaba arriba
+mkdir -p locks-tuyos
+docker compose cp couch-auth:/app/package-lock.json locks-tuyos/couchauth-package-lock.json
+docker compose cp frontend:/usr/share/nginx/html/package-lock.json locks-tuyos/frontend-package-lock.json
+ls -l locks-tuyos
 ```
 
-(Opcional pero recomendado) firewall mínimo:
+**Tenés que ver:** dos archivos de unos 400 KB cada uno.
+
+**Si dice "no such file":** esa imagen no tiene el lockfile. No pasa nada: en el zip vienen unos que
+generé y probé (build completo del frontend y login de couch-auth con Node 22). Seguí igual.
+
+### 1.2 Chequear el nombre del volumen de datos
 
 ```bash
-apt -y install ufw
-ufw allow OpenSSH
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw --force enable
+docker volume ls | grep couchdb-data
 ```
 
-> ⚠️ No abras 5984 (CouchDB) ni 3000 (couch-auth) al público. Solo se acceden a través de Caddy por HTTPS.
+**Tenés que ver:** `asterics-grid_couchdb-data`.
+
+**Si ves otro prefijo** (por ejemplo `gridebano_couchdb-data`): tu carpeta no se llama
+`asterics-grid`. Corré `docker compose down` **ahora** (antes de copiar los archivos), así no
+quedan contenedores viejos ocupando los puertos. Tus datos de prueba quedan en ese volumen viejo y
+el stack nuevo arranca con la base vacía, que para probar está bien.
+
+### 1.3 Crear una rama y copiar los archivos nuevos
+
+```bash
+git status                       # tiene que estar limpio (sin cambios sin commitear)
+git checkout -b despliegue-donweb
+```
+
+Descomprimí `GridEbano-actualizado.zip` en cualquier lado y **copiá todo su contenido encima de tu
+carpeta del proyecto**, reemplazando los archivos. Después:
+
+```bash
+cp locks-tuyos/*.json locks/     # tus lockfiles pisan los míos (si el 1.1 salió bien)
+rm -r locks-tuyos
+git status
+```
+
+**Tenés que ver:** modificados `docker-compose.yml`, los dos Dockerfiles, `nginx/default.conf`,
+`couchdb-config/docker.ini`, `.env.example`, varios scripts y docs; nuevos `caddy/`, `locks/`,
+`scripts/lib.sh`, `scripts/preparar-server.sh` y `scripts/verificar-sitio.sh`. En VS Code, en la
+pestaña Source Control, podés ver el diff de cada archivo.
+
+### 1.4 Ajustar tu `.env` local
+
+Abrí tu `.env` (el de la PC) y:
+- **Borrá** la línea `DB_SERVER_PUBLIC_URL=...`. Ya no se usa: ahora se arma sola con `AUTH_BASE_URL`.
+- **Agregá** `ASTERICS_VERSION=localdev-16`. Subir la versión hace que los navegadores tomen el
+  build nuevo en lugar del que tienen cacheado.
+- Dejá `COMPOSE_PROFILES`, `SITE_DOMAIN` y `ACME_EMAIL` **sin poner**: Caddy es solo para el server.
+- Si alguna clave tiene caracteres como `@ : / # ? %`, cambiala por una de solo letras y números.
+
+### 1.5 Rebuild con las imágenes nuevas
+
+```bash
+docker compose up -d --build     # la primera vez tarda 10-15 min (baja Node 22, nginx estable, etc.)
+./scripts/arrancar.sh
+```
+
+**Tenés que ver:** el build termina sin `ERROR`, y `arrancar.sh` termina en **TODO ARRIBA**.
+
+**Si el build falla:**
+- En `ERROR: AUTH_BASE_URL=...`: revisá el `.env`. Tiene que ser `https://...` completo, sin barra al final.
+- En `npm ci` con "lock file out of sync": el lockfile no corresponde. Volvé a los míos con
+  `git checkout -- locks/` y rebuildeá.
+- Cualquier otra cosa: copiame las últimas 30 líneas.
+
+### 1.6 Probar que la app está igual que antes
+
+1. Abrí la URL del Funnel (o `http://localhost:9095`). Si ves la versión vieja, recargá con `Ctrl+F5`.
+2. Logo EBANO, pantalla solo de login, entrar con tu usuario de prueba, la nube en verde.
+3. Probá el reloj de dwell y que carguen los tableros predefinidos.
+4. Chequeo de seguridad automático:
+   ```bash
+   ./scripts/verificar-sitio.sh
+   ```
+   **Tenés que ver:** `TODO OK`. En la PC es normal un `AVISO` sobre la redirección http→https.
+
+### 1.7 Commit y push a `main`
+
+```bash
+git add -A
+git update-index --chmod=+x scripts/*.sh   # que los scripts sean ejecutables en Linux (Windows no lo registra)
+git status                       # confirmá que NO aparezca .env ni backups/
+git commit -m "Infra de producción: Caddy, nginx endurecido, Node 22, lockfiles, scripts Linux"
+git checkout main
+git merge despliegue-donweb
+git push origin main
+```
+
+**Tenés que ver:** el push sin errores y los cambios en GitHub (`Tatobregon/GridEbano`). El server
+va a clonar de ahí.
 
 ---
 
-## 2. DNS — tres registros A
+## Fase 2 — Contratar el Cloud Server en DonWeb (~15 min)
 
-En el panel DNS de tu dominio, creá tres registros **A** apuntando a la **IP pública de tu Cloud Server**:
+### 2.1 Elegir el producto correcto
 
-| Nombre               | Tipo | Valor (IP del server) |
-|----------------------|------|-----------------------|
-| `grid.tudominio.com` | A    | `TU.IP.DEL.SERVER`    |
-| `auth.tudominio.com` | A    | `TU.IP.DEL.SERVER`    |
-| `db.tudominio.com`   | A    | `TU.IP.DEL.SERVER`    |
+Tiene que ser **Cloud Server** (un VPS con acceso root), **no** "Hosting" (el compartido, con
+cPanel): ahí no se puede instalar Docker.
 
-Esperá a que propaguen (`dig grid.tudominio.com +short` debe devolver tu IP) **antes** de levantar Caddy, porque necesita resolver los dominios para emitir los certificados.
+- **Sistema:** Ubuntu **24.04** LTS
+- **CPU / RAM:** 2 vCPU / **4 GB** (con 2 GB anda, pero el build se apoya en la swap y tarda más)
+- **Disco:** 40 GB o más
+- **Ubicación:** si te deja elegir, la más cercana a tus usuarios
+- **Copias de Seguridad:** activá el plan **Premium Diario** (30 copias del server, restauración
+  autogestionable). Si no aparece al contratar, se activa después desde el panel (fase 7.4).
+
+### 2.2 Anotar los datos de acceso
+
+Cuando esté creado, anotá en el gestor la **IP pública**, el usuario (`root`) y la **contraseña de
+root** (DonWeb la muestra en el panel o la manda por mail).
+
+### 2.3 Firewall del panel (si DonWeb tiene uno)
+
+Si el panel tiene una sección de firewall o reglas de red, permití la entrada a **22/TCP** (SSH),
+**80/TCP**, **443/TCP** y **443/UDP**. El firewall interno del server lo configura un script más
+adelante.
 
 ---
 
-## 3. Estructura del proyecto en el server
+## Fase 3 — Dominio (~10 min + propagación)
 
+### 3.1 Crear el registro DNS
+
+En el panel DNS de tu dominio creá un registro:
+
+| Tipo | Nombre | Valor | TTL |
+|---|---|---|---|
+| A | `app` (o el subdominio que elijas) | `TU.IP` | 300 (o el mínimo) |
+
+Hace falta uno solo: la app, el login y la base van todos por el mismo dominio.
+
+### 3.2 Verificar que resuelva
+
+[PC]:
 ```bash
-mkdir -p /opt/asterics-grid/{caddy,couchdb-config,scripts,backups}
+nslookup app.tudominio.com.ar
+```
+
+**Tenés que ver:** `Address: TU.IP`.
+
+**Si todavía no aparece:** puede tardar de minutos a unas horas. Seguí con la fase 4 mientras
+tanto; en la fase 5 hay un paso que espera a que resuelva.
+
+---
+
+## Fase 4 — Primer ingreso y preparación del server (~25 min)
+
+### 4.1 Conectarte por SSH
+
+[PC]:
+```bash
+ssh root@TU.IP
+```
+
+La primera vez pregunta *"Are you sure you want to continue connecting?"*: escribí `yes`. Después
+pegá la contraseña de root (no se ve mientras la escribís, es normal).
+
+**Tenés que ver:** un prompt tipo `root@nombre-del-server:~#`.
+
+### 4.2 (Recomendado) Entrar con clave SSH en vez de contraseña
+
+**Por qué:** una clave SSH no se puede adivinar por fuerza bruta, y te evita tipear la contraseña
+cada vez.
+
+[PC], en **otra** ventana de Git Bash:
+```bash
+ssh-keygen -t ed25519            # Enter a todo. Si dice que ya existe, respondé n y usá la que tenés
+cat ~/.ssh/id_ed25519.pub | ssh root@TU.IP "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+ssh root@TU.IP                   # ahora NO tiene que pedir contraseña
+```
+
+**Opcional, recién cuando la clave funcione:** apagar el login por contraseña. Hacelo [SERVER] y
+**sin cerrar la sesión actual**:
+```bash
+echo "PasswordAuthentication no" > /etc/ssh/sshd_config.d/00-solo-clave.conf
+sshd -t && systemctl reload ssh
+```
+Después probá conectarte desde **otra** ventana. Si entra, listo; si no, borrá ese archivo desde la
+sesión que dejaste abierta (`rm /etc/ssh/sshd_config.d/00-solo-clave.conf && systemctl reload ssh`).
+
+### 4.3 Clonar el repo
+
+[SERVER]:
+```bash
+git clone https://github.com/Tatobregon/GridEbano.git /opt/asterics-grid
 cd /opt/asterics-grid
+chmod +x scripts/*.sh            # por las dudas: los scripts tienen que ser ejecutables
+ls
 ```
 
-Vas a crear estos archivos (los detallamos abajo):
+**Tenés que ver:** `docker-compose.yml`, `caddy`, `locks`, `scripts`, etc. Si `git` no existe:
+`apt-get update && apt-get install -y git` y repetí.
 
+### 4.4 Preparar el server (un script hace todo)
+
+[SERVER]:
+```bash
+bash scripts/preparar-server.sh
 ```
-/opt/asterics-grid/
-├── docker-compose.yml
-├── .env
-├── Dockerfile.frontend
-├── Dockerfile.couchauth
-├── caddy/Caddyfile
-├── couchdb-config/docker.ini
-└── scripts/backup.sh
+
+Actualiza Ubuntu, pone la hora de Córdoba e instala Docker, swap, firewall (solo SSH, HTTP y HTTPS),
+fail2ban (bloquea a quien prueba contraseñas por SSH), actualizaciones de seguridad automáticas y
+rclone (por si algún día querés copiar backups a otro proveedor). Tarda de 5 a 10 minutos.
+
+**Tenés que ver:** al final, `Server listo.` con un resumen (versión de Docker, RAM, swap, disco y
+hora argentina).
+
+**Si Ubuntu pide reiniciar** (actualizó el kernel):
+```bash
+[ -f /var/run/reboot-required ] && reboot
 ```
+Esperá un minuto, volvé a conectarte (`ssh root@TU.IP`) y hacé `cd /opt/asterics-grid`.
 
 ---
 
-## 4. Variables de entorno (`.env`)
+## Fase 5 — Configurar y levantar (~30 min)
 
+### 5.1 Crear el `.env` con claves nuevas
+
+Un solo bloque crea el `.env` y genera las tres claves de producción. Son claves nuevas: no reuses
+las de la PC. Cambiá **solo las dos primeras líneas** (tu dominio y tu mail) y pegá todo junto:
+
+[SERVER]:
 ```bash
-cat > /opt/asterics-grid/.env <<'EOF'
-# ---- Dominios ----
-DOMAIN_GRID=grid.tudominio.com
-DOMAIN_AUTH=auth.tudominio.com
-DOMAIN_DB=db.tudominio.com
-
-# ---- CouchDB admin ----
-COUCHDB_USER=admin
-COUCHDB_PASSWORD=CAMBIAME_couch_admin_largo
-
-# ---- couch-auth -> CouchDB ----
-# El frontend (navegador) accede a la base personal por esta URL pública:
-DB_SERVER_PUBLIC_URL=https://db.tudominio.com
-# couch-auth accede a CouchDB internamente por la red de Docker:
-DB_SERVER_PROTOCOL=http://
-DB_SERVER_HOST=couchdb:5984
-DB_SERVER_USER=admin
-DB_SERVER_PASSWORD=CAMBIAME_couch_admin_largo
-CAUTH_USER_DB=auth-users
-CAUTH_COUCH_AUTH_DB=_users
-
-# ---- Release a pinear ----
-ASTERICS_TAG=release-2026-06-03-09.11/+0200
-ASTERICS_VERSION=selfhost-2026-06-03
+DOMINIO=app.tudominio.com.ar
+MAIL=tu-mail@tudominio.com.ar
+cat > .env <<EOF
+COUCHDB_PASSWORD=$(openssl rand -hex 24)
+REGISTER_SECRET=$(openssl rand -hex 24)
+ADMIN_UI_PASSWORD=$(openssl rand -hex 24)
+AUTH_BASE_URL=https://$DOMINIO
+ASTERICS_VERSION=prod-1
+COMPOSE_PROFILES=prod
+SITE_DOMAIN=$DOMINIO
+ACME_EMAIL=$MAIL
 EOF
+chmod 600 .env                   # que solo lo pueda leer root
+cat .env
 ```
 
-> `DB_SERVER_PASSWORD` debe ser **igual** a `COUCHDB_PASSWORD`.
+**Tenés que ver:** las 8 líneas. Las tres claves tienen 48 caracteres, solo letras y números (es a
+propósito: van dentro de URLs), y `AUTH_BASE_URL` empieza con `https://` y no termina en `/`.
 
----
+### 5.2 Guardar las claves en el gestor
 
-## 5. Config de CouchDB (`couchdb-config/docker.ini`)
+Copiá las tres claves del `cat .env` al gestor, en una entrada "GridEbano producción". La que vas a
+usar seguido es `ADMIN_UI_PASSWORD` (la del panel de alta de usuarios).
 
-CouchDB necesita modo single-node y **CORS habilitado** para que el navegador (origen `grid.…`) pueda sincronizar contra `db.…`.
+Más adelante, para editar el `.env` a mano: `nano .env` (guardar con `Ctrl+O` y `Enter`; salir con
+`Ctrl+X`).
 
+### 5.3 Esperar a que el DNS resuelva desde el server
+
+[SERVER]:
 ```bash
-cat > /opt/asterics-grid/couchdb-config/docker.ini <<'EOF'
-[couchdb]
-single_node = true
-
-[chttpd]
-enable_cors = true
-; CouchDB 3 requiere admin (no admin party)
-
-[cors]
-origins = https://grid.tudominio.com
-credentials = true
-methods = GET, PUT, POST, HEAD, DELETE
-headers = accept, authorization, content-type, origin, referer, x-csrf-token
-
-[httpd]
-enable_cors = true
-EOF
+getent hosts app.tudominio.com.ar
+curl -4 -s ifconfig.me; echo
 ```
 
-> Cambiá `https://grid.tudominio.com` por tu dominio real. Si querés permitir más orígenes (ej. un subdominio de staging), separalos con coma.
+**Tenés que ver:** la misma IP en las dos líneas.
 
----
+**Si la primera no muestra nada o da otra IP, esperá** y no sigas. Si Caddy pide el certificado
+antes de que el DNS esté bien, Let's Encrypt cuenta el intento fallido y, después de varios, te
+bloquea por una hora.
 
-## 6. Dockerfile del frontend (`Dockerfile.frontend`)
+### 5.4 Construir y levantar
 
-Compila el release pineado **con las dos modificaciones críticas** (URL del backend + entorno PROD) y lo sirve con nginx.
-
+[SERVER]:
 ```bash
-cat > /opt/asterics-grid/Dockerfile.frontend <<'EOF'
-# ---------- build ----------
-FROM node:18-bullseye AS build
-ARG ASTERICS_TAG
-ARG DOMAIN_AUTH
-ARG ASTERICS_VERSION
-WORKDIR /src
-
-# Clonar el release estable pineado (el tag contiene "/" y "+", por eso se entrecomilla)
-RUN git clone https://github.com/asterics/AsTeRICS-Grid.git . \
-    && git checkout "tags/${ASTERICS_TAG}"
-
-# (1) Apuntar el frontend a TU couch-auth en vez del de la fundación
-RUN sed -i "s#https://login1.couchdb.asterics-foundation.org#https://${DOMAIN_AUTH}#g" \
-    src/js/service/loginService.js
-
-# (2) Fijar entorno PROD y versión (reemplaza los placeholders que normalmente
-#     setea el script de release oficial). La versión también invalida el cache
-#     del service worker cuando actualices más adelante.
-RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
-    && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
-    && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/vue-components/views/aboutView.vue \
-    && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" serviceWorker.js
-
-# Instalar y compilar (saltamos jest para que el build no dependa de los tests)
-RUN npm ci
-RUN npx webpack --config webpack.config.js --env production \
-    && node scripts/getServiceWorkerCachePaths.js
-
-# ---------- serve ----------
-FROM nginx:1.27-alpine
-# El app se sirve desde la raíz del repo (index.html + carpeta app/ + serviceWorker.js + assets)
-COPY --from=build /src/ /usr/share/nginx/html/
-# Config nginx: SPA + no cachear el service worker ni index.html
-RUN printf '%s\n' \
-  'server {' \
-  '  listen 80;' \
-  '  root /usr/share/nginx/html;' \
-  '  index index.html;' \
-  '  location = /serviceWorker.js { add_header Cache-Control "no-cache"; }' \
-  '  location = /index.html       { add_header Cache-Control "no-cache"; }' \
-  '  location / { try_files $uri $uri/ /index.html; }' \
-  '}' > /etc/nginx/conf.d/default.conf
-EOF
-```
-
-> Si el `git checkout "tags/${ASTERICS_TAG}"` te diera problemas por el `/` del nombre, alternativa equivalente: `git clone --depth 1 --branch "${ASTERICS_TAG}" https://github.com/asterics/AsTeRICS-Grid.git .`
-
----
-
-## 7. Dockerfile de couch-auth (`Dockerfile.couchauth`)
-
-```bash
-cat > /opt/asterics-grid/Dockerfile.couchauth <<'EOF'
-FROM node:18-bullseye
-ARG ASTERICS_TAG
-WORKDIR /app
-RUN git clone https://github.com/asterics/AsTeRICS-Grid.git . \
-    && git checkout "tags/${ASTERICS_TAG}"
-RUN npm ci
-EXPOSE 3000
-CMD ["node", "superlogin/start.js"]
-EOF
-```
-
-> `superlogin/start.js` ya viene configurado con `sendConfirmEmail: false` y `requireEmailConfirm: false`, así que **no necesitás SMTP**: las cuentas quedan activas al crearse. Lee toda su config desde el `.env` que le pasamos por Compose.
-
----
-
-## 8. Caddyfile (`caddy/Caddyfile`)
-
-```bash
-cat > /opt/asterics-grid/caddy/Caddyfile <<'EOF'
-{
-    # Email para los avisos de Let's Encrypt
-    email tu-email@tudominio.com
-}
-
-grid.tudominio.com {
-    reverse_proxy frontend:80
-}
-
-auth.tudominio.com {
-    reverse_proxy couch-auth:3000
-}
-
-db.tudominio.com {
-    reverse_proxy couchdb:5984
-}
-EOF
-```
-
-> Reemplazá los tres dominios y el email. Caddy pide y renueva los certificados solo.
-
----
-
-## 9. docker-compose.yml
-
-```bash
-cat > /opt/asterics-grid/docker-compose.yml <<'EOF'
-services:
-  couchdb:
-    image: couchdb:3.4
-    restart: unless-stopped
-    environment:
-      COUCHDB_USER: ${COUCHDB_USER}
-      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD}
-    volumes:
-      - couchdb-data:/opt/couchdb/data
-      - ./couchdb-config/docker.ini:/opt/couchdb/etc/local.d/zz-docker.ini:ro
-    networks: [internal]
-
-  couch-auth:
-    build:
-      context: .
-      dockerfile: Dockerfile.couchauth
-      args:
-        ASTERICS_TAG: ${ASTERICS_TAG}
-    restart: unless-stopped
-    environment:
-      DB_SERVER_PUBLIC_URL: ${DB_SERVER_PUBLIC_URL}
-      DB_SERVER_PROTOCOL: ${DB_SERVER_PROTOCOL}
-      DB_SERVER_HOST: ${DB_SERVER_HOST}
-      DB_SERVER_USER: ${DB_SERVER_USER}
-      DB_SERVER_PASSWORD: ${DB_SERVER_PASSWORD}
-      CAUTH_USER_DB: ${CAUTH_USER_DB}
-      CAUTH_COUCH_AUTH_DB: ${CAUTH_COUCH_AUTH_DB}
-    depends_on: [couchdb]
-    networks: [internal]
-
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      args:
-        ASTERICS_TAG: ${ASTERICS_TAG}
-        DOMAIN_AUTH: ${DOMAIN_AUTH}
-        ASTERICS_VERSION: ${ASTERICS_VERSION}
-    restart: unless-stopped
-    networks: [internal]
-
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on: [frontend, couch-auth, couchdb]
-    networks: [internal]
-
-networks:
-  internal:
-
-volumes:
-  couchdb-data:
-  caddy-data:
-  caddy-config:
-EOF
-```
-
----
-
-## 10. Levantar el stack
-
-```bash
-cd /opt/asterics-grid
 docker compose up -d --build
-# Seguí los logs la primera vez
-docker compose logs -f
 ```
 
-La primera build tarda (clona y compila el frontend). Cuando termine:
+La primera vez tarda **10 a 20 minutos** (clona AsTeRICS Grid, instala dependencias, compila el
+frontend y baja ~285 MB de tableros).
 
+**Tenés que ver:** al final, cuatro contenedores: `couchdb` (Healthy), `couch-auth`, `frontend` y
+`caddy` (Started).
+
+**Si el build se corta con `Killed` o `exit code: 137`:** se quedó sin memoria. Mirá `free -h`
+(tiene que haber swap) y volvé a correr el mismo comando: retoma desde donde quedó.
+
+### 5.5 Inicializar y verificar
+
+[SERVER]:
 ```bash
-# Inicializar bases de sistema + la base de usuarios de couch-auth.
-# (single_node=true ya crea _users/_replicator/_global_changes; esto es por las dudas e idempotente)
-source .env
-docker compose exec couchdb bash -lc "
-  curl -s -X PUT http://$COUCHDB_USER:$COUCHDB_PASSWORD@127.0.0.1:5984/_users;
-  curl -s -X PUT http://$COUCHDB_USER:$COUCHDB_PASSWORD@127.0.0.1:5984/_replicator;
-  curl -s -X PUT http://$COUCHDB_USER:$COUCHDB_PASSWORD@127.0.0.1:5984/_global_changes;
-  curl -s -X PUT http://$COUCHDB_USER:$COUCHDB_PASSWORD@127.0.0.1:5984/auth-users;
-  echo
-"
-docker compose restart couch-auth
+./scripts/arrancar.sh
 ```
 
-**Verificación rápida:**
+Crea las bases y la vista `view-usernames` (sin ella couch-auth se cae), reinicia couch-auth y
+nginx, y prueba la URL pública.
 
+**Tenés que ver:** `TODO ARRIBA` con `HTTP 200` en Web y Sync.
+
+**Si dice ALGO NO RESPONDIÓ pero `Local -> HTTP 200`:** el stack anda y lo que falla es el acceso
+público. Mirá los logs de Caddy:
 ```bash
-# CouchDB responde por HTTPS
-curl -s https://db.tudominio.com/ ; echo
-# couch-auth responde
-curl -s https://auth.tudominio.com/auth/session ; echo
+docker compose logs --tail 50 caddy
+```
+Si habla de "challenge" o "timeout", el DNS no apunta bien o el firewall del panel de DonWeb no deja
+pasar el 80/443. Corregilo y corré de nuevo `./scripts/arrancar.sh`.
+
+### 5.6 Chequeo completo
+
+[SERVER] (y después también desde tu [PC] con `./scripts/verificar-sitio.sh https://app.tudominio.com.ar`):
+```bash
+./scripts/verificar-sitio.sh
 ```
 
-Abrí `https://grid.tudominio.com` en el navegador. Debería cargar la app. Probá crear un **usuario online** desde la propia UI y confirmá que sincroniza (el ícono de sync en la barra inferior).
+**Tenés que ver:** todas las líneas en `OK` y `TODO OK` al final. Además de probar lo que la app
+necesita, confirma que **no** estén expuestos el panel de CouchDB, `.git`, `node_modules`, el
+registro público ni el borrado de cuentas.
+
+### 5.7 Mirarlo en el navegador
+
+Abrí `https://app.tudominio.com.ar`. **Tenés que ver:** el candado, el logo EBANO y la pantalla de login.
 
 ---
 
-## 11. Crear vos las cuentas y entregárselas
+## Fase 6 — Primer usuario y prueba de sync (~15 min)
 
-Como decidiste provisionarlas vos, usá el endpoint de registro de couch-auth. **Reglas de usuario** (según el código): minúsculas, dígitos, `_` o `-`, entre **3 y 16 caracteres**; contraseña mínima 6.
+### 6.1 Crear un usuario desde el panel
 
-Script práctico:
+1. Entrá a `https://app.tudominio.com.ar/crear-usuario-ebano-soluciones`.
+2. Clave de acceso: la `ADMIN_UI_PASSWORD` del `.env`.
+3. Creá un usuario de prueba (por ejemplo `prueba1`) con una contraseña de 8 o más caracteres.
+4. **Guardalo en el gestor.**
 
-```bash
-cat > /opt/asterics-grid/scripts/crear-usuario.sh <<'EOF'
-#!/bin/bash
-# Uso: ./crear-usuario.sh <usuario> <contraseña> [email]
-set -e
-AUTH_URL="https://auth.tudominio.com"
-USER="$1"; PASS="$2"; EMAIL="${3:-$1@local.invalid}"
-if [ -z "$USER" ] || [ -z "$PASS" ]; then
-  echo "Uso: $0 <usuario> <contraseña> [email]"; exit 1
-fi
-curl -s -X POST "$AUTH_URL/auth/register" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$USER\",\"email\":\"$EMAIL\",\"password\":\"$PASS\",\"confirmPassword\":\"$PASS\"}"
-echo
-EOF
-chmod +x /opt/asterics-grid/scripts/crear-usuario.sh
+(Alternativa por consola, [SERVER]: `./scripts/crear-usuario.sh prueba1`. Te pide la contraseña sin
+mostrarla.)
 
-# Ejemplo:
-# ./scripts/crear-usuario.sh juanperez MiClaveSegura123
-```
+### 6.2 Login y sync en la PC
 
-Le pasás a cada persona su `usuario` + `contraseña` y el link `https://grid.tudominio.com`. En la app eligen "usuario online" e inician sesión con esas credenciales.
+Entrá a la app con ese usuario. **Tenés que ver:** la nube en verde. Hacé un cambio visible (por
+ejemplo, un tablero nuevo llamado "PRUEBA").
 
-> **Recordá:** la contraseña ES la llave de cifrado. Si el usuario la pierde y se desloguea en todos sus dispositivos, su data no se puede desencriptar (ni vos podés). Guardá vos una copia de las credenciales que entregás.
+### 6.3 Segundo dispositivo
+
+En el celular o una tablet, entrá a `https://app.tudominio.com.ar` con el mismo usuario.
+**Tenés que ver:** el tablero "PRUEBA". Probá también "Agregar a pantalla de inicio" (PWA).
 
 ---
 
-## 12. Backups (tu objetivo principal)
+## Fase 7 — Backups (~30 min)
 
-Snapshot nocturno del volumen de CouchDB con rotación de 14 días.
+El esquema queda en dos capas, las dos dentro de DonWeb:
 
+1. **Local, todas las noches:** un `.tgz` exacto de la base, en `/opt/asterics-grid/backups/`, con
+   14 días de historia. Sirve para volver atrás rápido sin llamar a nadie.
+2. **Copia de Seguridad de DonWeb, todas las noches:** una copia del **server entero** (incluida la
+   carpeta `backups/` con esos `.tgz`) en infraestructura separada de tu server, con 30 días de
+   historia y restauración desde el panel. Es la red que te salva si el server se muere entero.
+
+Como la copia de DonWeb se lleva los `.tgz` que dejó el paso 1, tenés backups consistentes fuera del
+disco del server sin configurar nada más.
+
+### 7.1 Backup manual
+
+[SERVER]:
 ```bash
-cat > /opt/asterics-grid/scripts/backup.sh <<'EOF'
-#!/bin/bash
-set -e
-BACKUP_DIR=/opt/asterics-grid/backups
-RETENTION_DAYS=14
-STAMP=$(date +%Y-%m-%d_%H%M)
-mkdir -p "$BACKUP_DIR"
-
-# tar del volumen couchdb-data (montado de solo lectura en un contenedor efímero)
-docker run --rm \
-  -v asterics-grid_couchdb-data:/data:ro \
-  -v "$BACKUP_DIR":/backup \
-  alpine sh -c "tar czf /backup/couchdb_${STAMP}.tgz -C /data ."
-
-# Rotación
-find "$BACKUP_DIR" -name 'couchdb_*.tgz' -mtime +$RETENTION_DAYS -delete
-echo "Backup OK: $BACKUP_DIR/couchdb_${STAMP}.tgz"
-EOF
-chmod +x /opt/asterics-grid/scripts/backup.sh
+./scripts/backup.sh
+ls -lh backups/
+tar tzf backups/couchdb_*.tgz | head
 ```
 
-> El nombre del volumen suele ser `asterics-grid_couchdb-data` (prefijo = nombre de la carpeta del compose). Confirmalo con `docker volume ls`.
+**Tenés que ver:** `Backup OK: ... (tamaño)`, y en la lista archivos con `shards/`. (El script ya
+verifica eso solo: si el backup saliera vacío, lo borra y da error.)
 
-Agendalo con cron (todos los días a las 3 AM):
+### 7.2 Restore de prueba (ahora que no hay datos reales)
 
-```bash
-crontab -e
-# agregá esta línea:
-0 3 * * * /opt/asterics-grid/scripts/backup.sh >> /opt/asterics-grid/backups/backup.log 2>&1
-```
+La idea es comprobar que un backup realmente vuelve atrás el servidor.
 
-**Restaurar** (ej. un usuario borró su comunicador y querés volver atrás):
-
-```bash
-cd /opt/asterics-grid
-docker compose stop couchdb
-# Vaciar el volumen y desempaquetar el snapshot elegido
-docker run --rm \
-  -v asterics-grid_couchdb-data:/data \
-  -v /opt/asterics-grid/backups:/backup \
-  alpine sh -c "rm -rf /data/* && tar xzf /backup/couchdb_2026-06-03_0300.tgz -C /data"
-docker compose start couchdb
-```
-
-> **Muy recomendado:** copiá los `.tgz` también **fuera del server** (otro server, S3, tu máquina por `scp`). Un backup en el mismo disco no te salva si el server muere.
->
-> Bonus: el repo oficial trae scripts útiles para mantenimiento en `scripts/` (p. ej. `couchDBCompact.js` para compactar y `couchDBReplicateAllDbs.js` para backup lógico por replicación). Opcionales.
-
----
-
-## 13. Actualizar a una versión nueva más adelante (el motivo de todo esto)
-
-Cuando el desarrollador saque una actualización y **se estabilice**, actualizás **solo el frontend**, dejando CouchDB y couch-auth intactos.
-
-**Procedimiento seguro (con staging):**
-
-1. Identificá el nuevo tag estable:
+1. Desde el panel, creá un usuario **`prueba-restore`** (es posterior al backup del 7.1).
+2. Listá los usuarios que hay en el server:
    ```bash
-   git ls-remote --tags --refs https://github.com/asterics/AsTeRICS-Grid.git \
-     | sed 's#.*refs/tags/##' | grep -E '^release-[0-9]{4}' | sort | tail -5
+   docker compose exec couchdb bash -c 'curl -s "http://admin:$COUCHDB_PASSWORD@127.0.0.1:5984/auth-users/_design/views/_view/view-usernames"'; echo
    ```
-2. (Recomendado) Probalo primero en un subdominio de staging que apunte al **mismo** backend:
-   - Creá un registro A `grid-next.tudominio.com`.
-   - Agregá un bloque en el `Caddyfile` y un servicio `frontend-next` en el compose con el nuevo `ASTERICS_TAG` y un `ASTERICS_VERSION` distinto.
-   - Agregá `https://grid-next.tudominio.com` a `origins` en `couchdb-config/docker.ini` y reiniciá couchdb.
-   - Probá login + sync con un usuario de prueba.
-3. Si todo anda, actualizá producción:
+   **Tenés que ver:** `prueba1` y `prueba-restore`.
+3. Restaurá el backup del 7.1:
    ```bash
-   cd /opt/asterics-grid
-   # Editá .env: nuevos ASTERICS_TAG y ASTERICS_VERSION
-   nano .env
-   docker compose build --no-cache frontend
-   docker compose up -d frontend
+   ./scripts/restore.sh backups/couchdb_<fecha>.tgz      # escribí: si
    ```
-4. **Bump de versión = cache busting:** al cambiar `ASTERICS_VERSION`, el service worker genera un cache nuevo y los navegadores toman la versión nueva (pueden requerir un reload). Por eso siempre cambiá la versión al actualizar.
+4. Repetí el comando del punto 2. **Tenés que ver:** solo `prueba1`. El restore funcionó.
 
-**Reglas de oro:**
-- Siempre hacé `checkout` de un **tag estable** específico, nunca de `master`.
-- No toques el stack de base (couchdb/couch-auth) salvo que una nueva versión cambie el modelo de datos; si eso pasa, probalo en staging antes.
-- Mantené el `.env` viejo anotado para poder volver atrás (rollback = volver al tag anterior y rebuild).
+> Ojo con lo que **no** hace un restore: vuelve atrás **todo** el servidor (todos los usuarios), y
+> un dispositivo que tenga una versión más nueva de un tablero la vuelve a subir cuando sincroniza.
+> Sirve para desastres (se rompió la base, se murió el disco), no para "un usuario borró un
+> tablero". Para eso queda pendiente un script de restore por usuario.
 
----
+### 7.3 Agendar el backup nocturno
 
-## 14. Cosas para tener en el radar
+[SERVER]:
+```bash
+crontab -e                       # si pregunta el editor, elegí nano (1)
+```
+Agregá al final esta línea (todas las noches a las 00:30, hora de Córdoba):
+```
+30 0 * * * cd /opt/asterics-grid && ./scripts/backup.sh --consistente >> /opt/asterics-grid/backups/backup.log 2>&1
+```
+Guardá (`Ctrl+O`, `Enter`) y salí (`Ctrl+X`).
 
-- **HTTPS es obligatorio.** El service worker (modo offline), la síntesis de voz y el micrófono no funcionan sobre HTTP. Caddy te lo resuelve, no sirvas nada por HTTP plano.
-- **Cifrado E2E:** los snapshots están cifrados pero son **restaurables** (la contraseña del usuario no cambia). No son legibles por vos. Pérdida de contraseña del usuario = data irrecuperable para ese usuario.
-- **Dependencia de upstream que el frontend congelado NO congela:** la app sigue trayendo el catálogo de plantillas de importación desde GitHub Pages (`asterics.github.io/Asterics-AAC-Data`) y usa un proxy de la fundación para algunas acciones HTTP. Tus grids guardados no dependen de eso. Si querés un congelamiento **total**, podés auto-hospedar también ese repo de datos y cambiar `constants.BOARDS_REPO_BASE_URL` en el build (paso avanzado, opcional).
-- **Licencia AGPL-3.0:** modificaste `loginService.js` (cambio de config). Servir una versión modificada te obliga a poner el código fuente a disposición de tus usuarios. Se cumple fácil publicando tu fork o linkeando a tu repo con los cambios.
-- **Seguridad:** no expongas 5984 ni 3000 al público. Cambiá las contraseñas de ejemplo por unas largas. Considerá fail2ban en SSH.
-- **Dimensionamiento:** ~100 usuarios/año es carga chica para CouchDB. Un Cloud Server modesto (2 vCPU / 2–4 GB RAM) alcanza de sobra. couch-auth usa sesiones en memoria por defecto, suficiente para esta escala (Redis recién tendría sentido con muchísimos logins concurrentes).
+**Por qué a esa hora:** DonWeb corre sus copias "durante la madrugada", así que conviene que el
+`.tgz` de la noche ya esté hecho antes. `--consistente` frena CouchDB unos 10 segundos para que la
+copia sea exacta; la app es offline-first y el sync reintenta solo, así que nadie lo nota.
 
----
+Al día siguiente, chequeá:
+```bash
+tail -20 /opt/asterics-grid/backups/backup.log
+ls -lh /opt/asterics-grid/backups/
+```
 
-## Apéndice — Comandos útiles
+### 7.4 Activar las Copias de Seguridad en el panel de DonWeb
+
+En el panel de tu Cloud Server, en la sección de **Copias de Seguridad**, elegí el plan:
+
+| Plan | Frecuencia | Copias que guarda | Restaurar |
+|---|---|---|---|
+| Standard (incluido) | semanal | 1 | pidiendo un ticket a soporte |
+| Premium Semanal | semanal | 4 | solo, desde el panel |
+| **Premium Diario** (recomendado) | diaria | 30 | solo, desde el panel |
+
+Con **Premium Diario** tenés 30 días de historia del server completo y podés restaurar en un par de
+clics, sin depender de soporte. El precio va por el tamaño del disco del server (por eso conviene no
+agrandar el disco más de lo necesario: con 40 GB estás holgado).
+
+**Verificá al día siguiente** que en el panel aparezca la primera copia, con fecha.
+
+> Las copias se guardan en infraestructura separada de tu server, así que un problema de hardware no
+> se lleva las dos cosas. Lo que no cubre es un problema de cuenta o de proveedor: todo queda en
+> DonWeb. Si querés cubrir también eso, el paso 7.5 es la forma barata.
+
+### 7.5 (Opcional pero recomendado) Una copia en tu PC de vez en cuando
+
+Que todo viva en un solo proveedor es el único agujero que queda. Una vez por mes, desde tu [PC]:
 
 ```bash
-# Estado y logs
-docker compose ps
-docker compose logs -f couch-auth
-docker compose logs -f couchdb
-
-# Reiniciar un servicio
-docker compose restart couch-auth
-
-# Ver bases creadas (incluye una por cada usuario online: asterics-grid-data$usuario)
-source .env
-docker compose exec couchdb curl -s http://$COUCHDB_USER:$COUCHDB_PASSWORD@127.0.0.1:5984/_all_dbs ; echo
-
-# Listar volúmenes (para confirmar el nombre exacto del volumen de datos)
-docker volume ls
+scp root@TU.IP:/opt/asterics-grid/backups/$(ssh root@TU.IP 'ls -t /opt/asterics-grid/backups/couchdb_*.tgz | head -1 | xargs -n1 basename') ~/Downloads/
 ```
+
+(O más simple: `ssh root@TU.IP 'ls -t /opt/asterics-grid/backups/'` para ver el nombre, y después
+`scp root@TU.IP:/opt/asterics-grid/backups/<archivo>.tgz .`)
+
+Guardalo junto con las contraseñas de los usuarios: sin esas contraseñas, los datos de un backup no
+se pueden descifrar.
+
+### 7.6 (Opcional, 5 min) Aviso si el backup no corre
+
+En https://healthchecks.io (gratis) creá un check con "Period: 1 day" y "Grace: 2 hours", y copiá su
+URL de ping. Agregala al `.env` ([SERVER], `nano .env`):
+```ini
+BACKUP_PING_URL=https://hc-ping.com/<tu-id>
+```
+Cada backup exitoso avisa ahí. Si una noche no llega el aviso, te llega un mail.
+
+## Fase 8 — Tests finales antes de dar clientes de alta
+
+- [ ] `./scripts/verificar-sitio.sh https://app.tudominio.com.ar` desde tu **[PC]** → `TODO OK`.
+- [ ] **Offline:** con la app abierta en el celular, poné modo avión. Tiene que seguir andando.
+      Hacé un cambio, sacá el modo avión y verificá que aparezca en el otro dispositivo.
+- [ ] **Voz:** que hable, con la voz que usan normalmente.
+- [ ] **Reloj de dwell** y tableros predefinidos, igual que en la PC.
+- [ ] **Test de caída**, [SERVER]: `docker compose stop couchdb`, esperá 30 s, hacé un cambio en la
+      app, mirá la nube, `docker compose start couchdb`. Con la configuración actual
+      (`retry: true`), la nube puede **seguir en verde** mientras el server está caído; el cambio
+      se sube solo cuando vuelve. Anotá lo que ves: es la decisión pendiente sobre el ícono.
+- [ ] **Reinicio del server**, [SERVER]: `reboot`. Esperá 2 minutos, reconectate y corré
+      `./scripts/verificar-sitio.sh`. Todo tiene que volver solo.
+- [ ] Si van a usar **EbanoVoz** con esta instalación: que la voz externa (`127.0.0.1:5555`)
+      funcione desde el dominio nuevo.
+- [ ] Backup de la noche en `backups/backup.log`, y la primera Copia de Seguridad visible en el
+      panel de DonWeb.
+
+---
+
+## Fase 9 — Después (no bloquea el lanzamiento)
+
+- [ ] **Apagar la PC como servidor:** en la PC, `"/c/Program Files/Tailscale/tailscale.exe" funnel reset`
+      y `docker compose down`. Sacar la URL del Funnel de los docs.
+- [ ] **Monitoreo de caída:** un check HTTP gratuito (UptimeRobot o similar) contra
+      `https://app.tudominio.com.ar/`, con aviso por mail.
+- [ ] **Decidir el ícono de sync** según lo que viste en el test de caída.
+- [ ] **Script de restore por usuario** (recuperar lo que borró una persona sin tocar a las demás).
+- [ ] Link visible al código fuente (AGPL) fuera de "Acerca de".
+- [ ] Borrar los usuarios de prueba cuando ya no hagan falta: `./scripts/borrar-usuario.sh prueba1`.
+
+---
+
+## Operación diaria (referencia rápida)
+
+Todo [SERVER], parado en `/opt/asterics-grid`:
+
+| Qué | Comando |
+|---|---|
+| Conectarse | [PC] `ssh root@TU.IP` y después `cd /opt/asterics-grid` |
+| Estado | `docker compose ps` |
+| Logs | `docker compose logs --tail 50 couch-auth` (o `couchdb`, `frontend`, `caddy`) |
+| Chequeo completo | `./scripts/verificar-sitio.sh` |
+| Crear usuario | Panel web, o `./scripts/crear-usuario.sh <usuario>` |
+| Borrar usuario | `./scripts/borrar-usuario.sh <usuario>` (irreversible) |
+| Backup ya | `./scripts/backup-offsite.sh` |
+| Restaurar | `./scripts/restore.sh backups/<archivo>.tgz` |
+| Parches de seguridad (cada ~mes) | `./scripts/parchear.sh` |
+| Bajar un backup a tu PC | [PC] `scp root@TU.IP:/opt/asterics-grid/backups/<archivo>.tgz .` |
+| Levantar todo tras un problema | `./scripts/arrancar.sh` |
+
+**Actualizar el código** (después de un push a `main`):
+```bash
+git pull
+docker compose up -d --build
+./scripts/arrancar.sh
+```
+Si cambiaste algo del frontend, antes subí `ASTERICS_VERSION` en el `.env` (por ejemplo `prod-2`),
+así los navegadores toman la versión nueva.
+
+**Ver la base de datos con Fauxton, en privado.** Fauxton no está publicado (a propósito). Para usarlo:
+[PC] `ssh -L 5984:127.0.0.1:5984 root@TU.IP`, dejá esa ventana abierta y entrá en el navegador a
+`http://localhost:5984/_utils` (usuario `admin`, clave `COUCHDB_PASSWORD`).
+
+---
+
+## Si algo falla
+
+| Síntoma | Causa probable | Qué hacer |
+|---|---|---|
+| El navegador dice "no es seguro" o no carga por HTTPS | Caddy no pudo sacar el certificado | `docker compose logs caddy`: revisá DNS (5.3) y el firewall del panel (2.3). Después, `./scripts/arrancar.sh` |
+| 502 Bad Gateway | nginx apunta a un contenedor recreado | `docker compose restart frontend` (o `./scripts/arrancar.sh`) |
+| `couch-auth` en "Restarting" | Falta una base o la vista `view-usernames` | `./scripts/arrancar.sh` |
+| "Usuario o contraseña incorrectos" con un usuario recién creado | Se creó sin el hash de la app | Crear usuarios **solo** con el panel o `crear-usuario.sh` |
+| El build termina en `Killed` | Poca memoria | `free -h` (tiene que haber swap) y repetir el build |
+| La app muestra una versión vieja | Service worker cacheado | Subir `ASTERICS_VERSION` y rebuildear; en el navegador, `Ctrl+F5` |
+| `backup.sh`: "no existe el volumen" | El stack nunca se levantó con este compose | `docker compose up -d` primero |
+| Muchos 503 en el login | Rate limit (60 por minuto por IP) | Esperar un minuto; si es un ataque, `fail2ban` y el límite lo contienen |
+| El disco se llena | Imágenes viejas de builds anteriores | `docker image prune -f` (no toca los datos) |
+
+**Nunca** uses `docker compose down -v`: el `-v` borra el volumen con **todos** los datos.

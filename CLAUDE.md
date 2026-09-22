@@ -1,162 +1,130 @@
 # CLAUDE.md — Contexto del proyecto
 
-> Este archivo lo lee Claude Code automáticamente al abrir la carpeta. Resume todo el
-> trabajo de planificación hecho previamente, para continuar sin perder contexto.
+> Este archivo lo lee Claude Code automáticamente al abrir la carpeta. Es el mapa del proyecto:
+> qué es, cómo está armado HOY, qué se decidió y qué trampas ya conocemos. Si algo acá contradice
+> al código, manda el código (y hay que corregir este archivo).
 
 ## Objetivo
 
 Auto-hospedar **AsTeRICS Grid** (app de Comunicación Aumentativa y Alternativa, open source,
-AGPL-3.0) en una versión **congelada y estable**, para que las actualizaciones que publica
-el desarrollador upstream no rompan funcionalidades de las que dependen usuarios reales.
-Estrategia: clonar una versión estable concreta y actualizar a mano solo cuando una nueva
-versión upstream esté probada.
+AGPL-3.0) en una versión **congelada y estable** para los usuarios de Ébano Soluciones (~100/año),
+para que las actualizaciones del upstream no rompan lo que usan personas reales. Se actualiza a
+mano, solo cuando una versión nueva esté probada.
 
-Repo upstream: https://github.com/asterics/AsTeRICS-Grid
+- Upstream: https://github.com/asterics/AsTeRICS-Grid — release pineado `release-2026-06-03-09.11/+0200`
+- Este repo (público, por AGPL): https://github.com/Tatobregon/GridEbano
 
 ## Fase actual
 
-**Entorno de desarrollo LOCAL** en la máquina del usuario (Windows + Docker Desktop + WSL2),
-sirviendo todo por `localhost` sobre HTTP. Más adelante se migrará a un servidor (DonWeb
-Cloud Server) con dominios + HTTPS. Ver `docs/runbook-prod.md` para esa fase.
+- **Local (PC Windows + Docker Desktop + Git Bash):** entorno de pruebas, expuesto con Tailscale
+  Funnel. Sin Caddy.
+- **Producción:** migrando a un **Cloud Server de DonWeb** (Ubuntu 24.04) con dominio propio y HTTPS
+  vía Caddy. La guía paso a paso es `docs/runbook-prod.md`.
 
-> Importante: `http://localhost` es "contexto seguro" en los navegadores, así que el service
-> worker (offline), la síntesis de voz y el micrófono funcionan sin HTTPS. Por eso en local
-> no usamos Caddy ni certificados. Limitación: accesible solo desde esta misma máquina.
+La **app que ven los usuarios quedó como se quiere** (branding, reloj de dwell, solo-login, tableros
+propios). Los cambios de infraestructura no deben alterar ese comportamiento visible.
 
-## Arquitectura
+## Arquitectura (igual en local y en prod)
 
-Tres servicios en Docker Compose (`docker-compose.yml`):
+```
+Navegador ──HTTPS──► [Caddy (solo prod) | Tailscale Funnel (local)] ──► nginx (servicio frontend, :80)
+   nginx = puerta única, same-origin:
+     /                          → build estático de AsTeRICS Grid + mirror de tableros /Asterics-AAC-Data/
+     /auth/login|logout|logout-all|refresh → couch-auth:3000   (resto de /auth/ → 404)
+     /admin/*, /crear-usuario-ebano-soluciones → panel de alta de usuarios (couch-auth)
+     /couchdb/<base de usuario> → couchdb:5984   (/couchdb/_* → 404: sin Fauxton ni _session públicos)
+     /user/*, /api/*, /.git, /node_modules → 404
+```
 
-- **couchdb** (CouchDB 3.4) — base de datos. Una base por usuario online. Puerto 5984.
-- **couch-auth** (node, del repo upstream `superlogin/start.js`) — registro/login, crea las
-  bases por usuario. Puerto 3000. Lee config desde variables de entorno (ya inyectadas por Compose).
-- **frontend** (nginx) — sirve el build estático de AsTeRICS Grid + el mirror self-hosteado del
-  repo de tableros en `/Asterics-AAC-Data/` (same-origin). Puerto 9095.
+Servicios en `docker-compose.yml` (proyecto con `name: asterics-grid` fijo):
+- **couchdb** (couchdb:3.4) — una base por usuario (`asterics-grid-data$<hash>`), volumen
+  `asterics-grid_couchdb-data`. Puerto solo en 127.0.0.1:5984.
+- **couch-auth** (node:22, `superlogin/start.js` del upstream + patches) — login, crea las bases de
+  usuario. 127.0.0.1:3000.
+- **frontend** (nginx:stable-alpine) — app + reverse proxy. 127.0.0.1:9095.
+- **caddy** (caddy:2, **perfil `prod`**) — HTTPS automático. Solo arranca con `COMPOSE_PROFILES=prod`
+  en el `.env` (el server). Puertos públicos 80/443.
 
-El navegador: carga el frontend desde `:9095`, se autentica contra couch-auth en `:3000`, y
-PouchDB sincroniza directamente contra la base personal del usuario en CouchDB `:5984`.
+Configuración por entorno en `.env` (no versionado; plantilla en `.env.example`):
+`COUCHDB_PASSWORD`, `REGISTER_SECRET`, `ADMIN_UI_PASSWORD` (solo letras y números: van dentro de
+URLs), `AUTH_BASE_URL` (https://dominio, sin barra final; se HORNEA en el bundle), `ASTERICS_VERSION`,
+y en prod `COMPOSE_PROFILES=prod`, `SITE_DOMAIN`, `ACME_EMAIL`, `RCLONE_DESTINO`, `BACKUP_PING_URL`.
+`DB_SERVER_PUBLIC_URL` ya no va en el `.env`: el compose la arma como `${AUTH_BASE_URL}/couchdb/`.
 
 ## Decisiones tomadas (no re-litigar sin avisar al usuario)
 
-1. **Modo ONLINE** (no offline). El usuario necesita que los comunicadores estén respaldados
-   del lado servidor, no solo en el dispositivo.
-2. **Cifrado E2E:** los datos en CouchDB están cifrados con la contraseña del usuario. El admin
-   NO puede leerlos, pero SÍ puede **restaurarlos** desde un snapshot (la contraseña no cambia).
-   El borrado de un usuario se sincroniza al servidor, así que el sync solo NO protege contra
-   borrados accidentales → por eso hacemos snapshots del volumen de CouchDB.
-3. **Backup = snapshots del volumen `couchdb-data`** (`scripts/backup.sh`). Sin export `.grd`
-   automatizado por ahora.
-4. **Cuentas creadas por el admin** (no auto-registro abierto). Ver `scripts/crear-usuario.sh`.
-5. **Sin confirmación por email** → no se necesita SMTP. `superlogin/start.js` ya viene con
-   `sendConfirmEmail: false` y `requireEmailConfirm: false`.
-6. **Release pineado:** `release-2026-06-03-09.11/+0200` (último estable al planificar).
-   Escala estimada: ~100 usuarios/año.
+1. **Modo online** con sync (respaldo del lado servidor), no solo-offline.
+2. **Cuentas creadas solo por el admin** (panel web o `scripts/crear-usuario.sh`). Registro público
+   bloqueado en couch-auth (guard con `X-Register-Secret`, fail-closed) y en nginx.
+3. **Sin email/SMTP** (`start.js` ya trae `sendConfirmEmail: false`).
+4. **Política de contraseñas "admin custodia"**: el admin guarda las contraseñas de los usuarios en
+   un gestor (ver `docs/politica-contrasenas.md`).
+5. **Backups en dos capas:** cron nocturno (00:30) con `backup.sh --consistente` → `.tgz` del volumen
+   de CouchDB en `backups/` (14 días), y las **Copias de Seguridad de DonWeb** (plan Premium Diario,
+   30 copias del server entero en infraestructura separada) se llevan esos `.tgz`. `backup-offsite.sh`
+   (rclone) queda para la PC o para copiar a otro proveedor.
+6. **Versión congelada**: tag del upstream + commit de tableros (`BOARDS_COMMIT`) + dependencias
+   congeladas en `locks/` (se instalan con `npm ci`).
 
-## Las CINCO modificaciones críticas al código upstream (ya implementadas en Dockerfile.frontend)
+## Modificaciones al upstream (todas en tiempo de build, sin fork)
 
-1. En `src/js/service/loginService.js`, la URL del backend está hardcodeada a
-   `https://login1.couchdb.asterics-foundation.org`. Se reemplaza por la nuestra
-   (`AUTH_BASE_URL`, en local `http://localhost:3000`).
-2. El entorno se inyecta vía placeholder `#ASTERICS_GRID_ENV#`. Si se compila sin el script de
-   release oficial, la app cree estar en modo dev. Se setea a `PROD` y se pone un número de
-   versión (`ASTERICS_VERSION`), que además invalida el cache del service worker al actualizar.
-3. **Repo de tableros self-hosteado** (desacople total de la fundación): la URL
-   `https://asterics.github.io/Asterics-AAC-Data/` (hardcodeada en `constants.js` y
-   `boardService.js`) se reemplaza por la ruta root-relative `/Asterics-AAC-Data/`. Una etapa
-   `boards` del Dockerfile clona ese repo PINEADO (`BOARDS_COMMIT` en el compose) y el nginx lo
-   sirve same-origin. Así tableros, imágenes y miniaturas predefinidas salen de NUESTRO servidor.
-   El metadata usa rutas relativas (verificado: 0 URLs absolutas a asterics.github.io).
-4. **Sync resiliente** (`src/js/service/data/pouchDbAdapter.js`): el upstream replica con
-   `retry: false` (asume server estable). En nuestro setup, cualquier blip transitorio dispara el
-   handler de error → `triggerConnectionLost()` cancela el sync y muestra la X **para siempre**.
-   Se cambia a `retry: true` para que PouchDB reintente solo. (2 ocurrencias.)
-5. **Cache-busting del service worker** (`serviceWorker.js`): el release oficial ya reemplazó el
-   placeholder `#ASTERICS_GRID_VERSION#`, así que nuestro `serviceWorker.js` quedaba IDÉNTICO en
-   cada build y el navegador nunca actualizaba (servía el bundle viejo cacheado). Se versiona
-   `APP_CACHE_NAME` con `ASTERICS_VERSION` (`app-cache-<version>`) → cada build cambia el SW y el
-   navegador actualiza solo. **Por eso, al cambiar el frontend, hay que subir `ASTERICS_VERSION`.**
+`Dockerfile.frontend` (cada `sed` va seguido de un `grep -q` que hace fallar el build si no aplicó;
+los patches `.js` abortan si no encuentran su ancla):
+1. `loginService.js`: URL de login de la fundación → `AUTH_BASE_URL`.
+2. `constants.js` + `boardService.js`: tableros → `/Asterics-AAC-Data/` (mirror propio, same-origin).
+3. `pouchDbAdapter.js`: `retry: false` → `retry: true`. **Efecto conocido:** con el server caído el
+   ícono de la nube puede quedar en verde (PouchDB informa la falla como `paused`). Pendiente de
+   decisión del usuario; no cambiar sin avisar.
+4. `serviceWorker.js`: `APP_CACHE_NAME` versionado con `ASTERICS_VERSION` → **al cambiar el frontend,
+   subir `ASTERICS_VERSION`**.
+5. Placeholders de entorno → `PROD` + versión.
+6. Patches JS (`scripts/patch-*.js`): link a la fuente en "Acerca de" (AGPL), limpieza del SW,
+   neutralización de podcast/CORS-proxy de la fundación, UI solo-login (sin registro ni usuario
+   offline), reloj de dwell en hovering, branding EBANO, quitar "Acerca de" y "Ayuda" del menú.
+7. `node_modules/` y `.git/` se borran antes de copiar al nginx (no se publican).
 
-## Fixes aplicados al levantar por primera vez (2026-06-29, entorno Windows)
+`Dockerfile.couchauth`: `patch-couchauth.js` (guard de registro) y `patch-admin-endpoints.js`
+(`/admin/verificar` y `/admin/crear-usuario`; el hash de la contraseña replica al de la app:
+`sha256('STATIC_USER_PW_SALT' + clave)`). Runtime en `node:22-bookworm-slim`, usuario `node`.
 
-Al levantar el stack por primera vez aparecieron dos problemas, ya resueltos en los archivos:
+## Trampas conocidas (ya resueltas; no reintroducir)
 
-1. **`npm ci` fallaba** en `Dockerfile.frontend` y `Dockerfile.couchauth`: el repo upstream NO
-   commitea `package-lock.json`, y `npm ci` lo exige. → Cambiado a **`npm install`** en ambos.
-2. **couchdb crasheaba con exit 1 y CERO logs** (crash-loop). Causa: el entrypoint de la imagen
-   `couchdb:3.4` corre `find /opt/couchdb -exec chown -f couchdb:couchdb`; el `docker.ini`
-   bind-montado desde Windows aparece como `root` y, con `:ro`, el chown falla en un FS read-only
-   → `find` devuelve !=0 → `set -e` mata el arranque antes de loggear. → Se quitó **`:ro`** del
-   mount del `docker.ini` en `docker-compose.yml`. (Es específico de bind-mounts de Windows; en
-   Linux con el archivo ya en uid couchdb no se dispara.)
+- **Vista `view-usernames` en `auth-users` es obligatoria**: sin ella couch-auth crashea en loop.
+  La crea `scripts/arrancar.sh`.
+- **Usuarios creados sin el hash de la app no pueden entrar.** Crear solo con el panel o el script.
+- **`name: asterics-grid` en el compose**: los scripts de backup/restore usan el volumen
+  `asterics-grid_couchdb-data`. Sin el nombre fijo, el volumen dependía de la carpeta y el backup
+  salía vacío.
+- **`docker.ini` se monta SIN `:ro`** (el entrypoint de couchdb hace chown y con `:ro` muere sin logs)
+  y como `00-custom.ini` (así CouchDB no escribe el hash del admin en nuestro archivo).
+- **nginx cachea las IPs internas**: si se recrea couch-auth/couchdb, reiniciar `frontend`
+  (`arrancar.sh` ya lo hace).
+- **Scripts**: comparten `scripts/lib.sh`; andan en Git Bash (Windows) y en Linux. En Windows hace
+  falta `MSYS_NO_PATHCONV=1` (lo exporta `lib.sh`) y `docker compose` con `cd` en vez de `-f`.
+  Tienen que estar commiteados como ejecutables (`git update-index --chmod=+x scripts/*.sh`).
+- **Cifrado**: la clave de cifrado de los datos se deriva del mismo hash que la app manda al login,
+  así que NO es E2E frente a quien opera el servidor. No prometer eso a clientes.
+- **Restore** (`restore.sh`) restaura TODO el volumen; no sirve para recuperar lo que borró un solo
+  usuario (su dispositivo re-sube el borrado). Pendiente: script de restore por usuario.
 
-Verificado: los 3 servicios quedan `running`, registro de usuario OK y se crea la base personal
-`asterics-grid-data$<hash>` en CouchDB. Usuario de prueba creado: `pruebauno` / `Clave123`.
-
-## Cómo levantar
-
-```bash
-docker compose up -d --build
-# Inicializar bases (idempotente):
-docker compose exec couchdb bash -lc '
-  for db in _users _replicator _global_changes auth-users; do
-    curl -s -X PUT http://admin:localdev123@127.0.0.1:5984/$db; echo " -> $db";
-  done'
-# Vista 'view-usernames' en auth-users — OBLIGATORIA: sin ella couch-auth CRASHEA (unhandled
-# rejection) cuando la UI valida nombres vía /user/validate-username. Persiste en el volumen.
-curl -s -X PUT http://admin:localdev123@localhost:5984/auth-users/_design/views \
-  -H 'Content-Type: application/json' \
-  -d '{"views":{"view-usernames":{"map":"function (doc) { if (doc.key) { emit(doc.key, null); } }"}}}'; echo
-docker compose restart couch-auth
-# Abrir: http://localhost:9095
-# Test de humo: crear un "usuario online" desde la UI y verificar que el sync queda en verde.
-```
-
-## Próximos pasos / TODO
-
-- [x] Levantar el stack local — los 3 servicios `running`, registro vía API OK (usuario `pruebauno`).
-      Falta el último paso manual: abrir http://localhost:9095, loguearse y ver el sync en verde.
-- [ ] Crear las primeras cuentas con `scripts/crear-usuario.sh`.
-- [x] Ciclo de backup + restore: PROBADO end-to-end en vivo. `scripts/backup.sh` (snapshot del
-      volumen, rotación 14 días) y `scripts/restore.sh <archivo.tgz> [--yes]` (para couchdb → saca
-      snapshot de seguridad `pre-restore_*.tgz` → vacía → extrae → arranca). Ambos portables a
-      Windows/Git Bash (`MSYS_NO_PATHCONV=1`; restore hace `cd` + compose sin `-f`). Restore
-      verificado: doc_counts vuelven idénticos. Falta: agendar (cron en prod) y copiar OFFSITE.
-- [x] Vista `view-usernames` en `auth-users` (design doc `_design/views`): CREADA. Resultó NO
-      opcional — sin ella, el endpoint `/user/validate-username` (custom en `superlogin/start.js`,
-      hace `authUsers.view('views','view-usernames')` sin try/catch) tira un 404 → unhandled
-      rejection → couch-auth crashea en loop. Síntomas en la UI: "No se pudo verificar el nombre
-      de usuario" y, por el crash, queda "no conectado." (que de por sí es la etiqueta `notLoggedIn`,
-      no un error de red). Ya incluida en el paso de inicialización de "Cómo levantar".
-- [x] Auto-hospedar el repo de datos de tableros (`Asterics-AAC-Data`): HECHO. Mirror pineado
-      (`BOARDS_COMMIT`) servido same-origin por el nginx en `/Asterics-AAC-Data/`; URLs repunteadas
-      en `constants.js` y `boardService.js`. Desacople 100% de asterics.github.io.
-- [~] "Producción temporal" en la PC vía **Tailscale Funnel** (para testear desde otra PC sin pagar
-      server): expuesto en `https://pc-tato.taila78f74.ts.net` (+ `:8443` login, `:10000` db).
-      Clave admin de CouchDB endurecida. Requiere Docker Desktop corriendo. Detalle en la memoria
-      del proyecto y en el runbook. Al mudar a server real: rebuild con la URL nueva (o dominio fijo).
-- [ ] Migración a producción: ver `docs/runbook-prod.md` (agregar Caddy + 3 subdominios + HTTPS;
-      cambiar `AUTH_BASE_URL`, `DB_SERVER_PUBLIC_URL` y CORS `origins` a los dominios reales;
-      claves fuertes; backups fuera del server).
-
-## Notas de licencia
-
-AGPL-3.0: se modificó `loginService.js` (cambio de config). Servir una versión modificada
-obliga a poner el código fuente a disposición de los usuarios. Se cumple publicando el fork
-o linkeando a un repo con los cambios.
-
-## Estructura
+## Archivos
 
 ```
-asterics-grid/
-├── CLAUDE.md                  ← este archivo
-├── README.md                  ← quickstart para humanos
-├── docker-compose.yml         ← stack local (couchdb + couch-auth + frontend)
-├── Dockerfile.frontend        ← build del frontend con las 2 mods críticas
-├── Dockerfile.couchauth       ← servicio de auth (del repo upstream)
-├── couchdb-config/docker.ini  ← single-node + CORS
-├── scripts/crear-usuario.sh   ← alta de cuentas (admin)
-├── scripts/backup.sh          ← snapshot del volumen de CouchDB
-└── docs/
-    ├── runbook-local.md       ← guía detallada de esta fase (local)
-    └── runbook-prod.md        ← guía de la fase de producción (servidor)
+docker-compose.yml        stack (couchdb, couch-auth, frontend, caddy[prod])
+Dockerfile.frontend       build del frontend con todas las modificaciones
+Dockerfile.couchauth      couch-auth + patches
+caddy/Caddyfile           HTTPS de producción
+nginx/default.conf        puerta única: proxy, lista blanca de rutas, headers, rate limits, IP real
+nginx/admin-crear-usuario.html   panel de alta de usuarios
+couchdb-config/docker.ini single-node (sin CORS: todo es same-origin)
+locks/                    package-lock.json congelados (frontend y couch-auth)
+scripts/lib.sh            funciones comunes de los scripts
+scripts/arrancar.sh       levanta + inicializa bases/vista + verifica (PC y server)
+scripts/preparar-server.sh    prepara un Ubuntu 24.04 nuevo (Docker, firewall, fail2ban, swap...)
+scripts/verificar-sitio.sh    chequeo desde afuera: lo necesario anda, lo sensible da 404
+scripts/crear-usuario.sh / borrar-usuario.sh
+scripts/backup.sh / backup-offsite.sh / restore.sh / parchear.sh
+docs/runbook-prod.md      despliegue y operación en DonWeb (paso a paso)
+docs/checklist-operacion.md   rescate en la PC local
+avances/                  estado del proyecto, auditorías y revisiones
 ```

@@ -11,3 +11,7 @@ avances/parcheos.log
 
 # Logs transitorios de build/ejecución
 *.log
+
+# Ayudantes temporales del despliegue (no van al repo)
+/actualizar-local.sh
+/subir-a-github.sh

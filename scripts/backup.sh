@@ -1,28 +1,57 @@
 #!/bin/bash
-# Snapshot del volumen de datos de CouchDB con rotación.
-# El nombre del volumen es <carpeta>_couchdb-data (confirmar con: docker volume ls)
+# Snapshot del volumen de datos de CouchDB, con verificación y rotación.
+# Uso:  ./scripts/backup.sh                 (en caliente, sin cortar el servicio)
+#       ./scripts/backup.sh --consistente   (para CouchDB ~10 s durante la copia: es el que usa el cron)
 #
-# Consistencia: se tar-ea el volumen EN CALIENTE (couchdb corriendo). El formato de CouchDB es
-# append-only y escribe el header al final, así que un snapshot en caliente restaura a un estado
-# consistente (a lo sumo se pierden los últimos segundos de escrituras, nunca datos ya commiteados).
-# Para un backup 100% consistente podés parar couchdb antes (`docker compose stop couchdb`) y
-# arrancarlo después, a costa de unos segundos de downtime.
+# Consistencia: en caliente, el formato append-only de CouchDB restaura a un estado consistente (a lo
+# sumo se pierden los últimos segundos de escrituras). Con --consistente es 100% exacto; como la app
+# es offline-first, los usuarios no notan el corte (el sync reintenta solo).
 set -e
-export MSYS_NO_PATHCONV=1   # Windows/Git Bash: evita que se mangleen los paths del contenedor. Inocuo en Linux.
+source "$(dirname "$0")/lib.sh"
 
-BACKUP_DIR="$(cd "$(dirname "$0")/.." && pwd)/backups"
-VOLUME="asterics-grid_couchdb-data"
 RETENTION_DAYS=14
 STAMP=$(date +%Y-%m-%d_%H%M)
+ARCHIVO="$BACKUP_DIR/couchdb_${STAMP}.tgz"
 mkdir -p "$BACKUP_DIR"
+
+# Si el volumen no existe, `docker run -v` crearía uno VACÍO y el backup saldría vacío sin avisar.
+docker volume inspect "$VOLUME" >/dev/null 2>&1 || {
+  echo "ERROR: no existe el volumen $VOLUME (¿el stack se levantó alguna vez con este docker-compose.yml?)."
+  exit 1
+}
+
+if [ "$1" = "--consistente" ]; then
+  compose stop couchdb >/dev/null
+  trap 'compose start couchdb >/dev/null' EXIT   # pase lo que pase, CouchDB vuelve a arrancar
+fi
 
 docker run --rm \
   -v "${VOLUME}":/data:ro \
   -v "$BACKUP_DIR":/backup \
   alpine sh -c "tar czf /backup/couchdb_${STAMP}.tgz -C /data ."
 
-# Rotación: borrar backups más viejos que RETENTION_DAYS.
+if [ "$1" = "--consistente" ]; then
+  compose start couchdb >/dev/null
+  trap - EXIT
+fi
+
+# Verificación: el archivo tiene que contener los datos de CouchDB (carpeta shards/).
+if ! tar tzf "$ARCHIVO" 2>/dev/null | grep -q 'shards/'; then
+  echo "ERROR: el backup $ARCHIVO no contiene datos de CouchDB. Lo borro para que no engañe."
+  rm -f "$ARCHIVO"
+  exit 1
+fi
+
+# Rotación: borrar backups locales más viejos que RETENTION_DAYS.
 find "$BACKUP_DIR" -name 'couchdb_*.tgz' -mtime +$RETENTION_DAYS -delete
 
-SIZE=$(du -h "$BACKUP_DIR/couchdb_${STAMP}.tgz" | cut -f1)
-echo "Backup OK: $BACKUP_DIR/couchdb_${STAMP}.tgz ($SIZE)"
+SIZE=$(du -h "$ARCHIVO" | cut -f1)
+echo "Backup OK: $ARCHIVO ($SIZE)"
+
+# Aviso de "salió bien" a un monitor externo (opcional: BACKUP_PING_URL en el .env; ej. healthchecks.io).
+# Si una noche no llega el aviso, el monitor manda un mail. backup-offsite.sh avisa él mismo al final,
+# así que cuando lo llama desde ahí, este ping se saltea.
+PING="$(env_var BACKUP_PING_URL)"
+if [ -n "$PING" ] && [ "${BACKUP_SIN_PING:-0}" != "1" ]; then
+  curl -fsS -m 10 --retry 3 "$PING" >/dev/null 2>&1 || true
+fi

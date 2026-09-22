@@ -1,3 +1,7 @@
+> **OBSOLETO (2026-09-22).** Describe la primera arquitectura local (3 puertos, CORS, alta de
+> usuarios sin hash). Se conserva como historia. Para operar la PC: `docs/checklist-operacion.md`.
+> Para el server: `docs/runbook-prod.md`. El estado actual está en `CLAUDE.md`.
+
 # AsTeRICS Grid — Entorno de desarrollo local (tu propia compu)
 
 Variante del runbook para correr todo en tu máquina como servidor de desarrollo, sin dominios, sin certificados y sin host pagado. Reutiliza los mismos contenedores que la versión de producción; lo único que cambia es el networking (todo por `localhost`) y que no hay TLS.

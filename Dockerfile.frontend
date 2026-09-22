@@ -1,8 +1,10 @@
 # ── Stage: datos de tableros self-hosted (mirror PINEADO de Asterics-AAC-Data) ──
 # Servido luego same-origin por nuestro nginx, así NO dependemos de asterics.github.io:
 # las imágenes, miniaturas y tableros predefinidos salen de NUESTRO servidor.
-FROM node:18-bullseye AS boards
+# Imagen mínima con git (así un parche de Node no obliga a re-bajar los ~285 MB de tableros).
+FROM alpine:3 AS boards
 ARG BOARDS_COMMIT
+RUN apk add --no-cache git
 WORKDIR /boards
 RUN git init -q \
     && git remote add origin https://github.com/asterics/Asterics-AAC-Data.git \
@@ -11,7 +13,9 @@ RUN git init -q \
     && rm -rf /boards/.git
 
 # ── Stage: build del frontend ──
-FROM node:18-bullseye AS build
+# Node 22: la misma versión con la que compila el CI del upstream. (node:18 dejó de recibir
+# parches en 2025: por eso se cambió.)
+FROM node:22-bookworm AS build
 ARG ASTERICS_TAG
 ARG AUTH_BASE_URL
 ARG ASTERICS_VERSION
@@ -20,24 +24,41 @@ WORKDIR /src
 RUN git clone https://github.com/asterics/AsTeRICS-Grid.git . \
     && git checkout "tags/${ASTERICS_TAG}"
 
-# (1) Apuntar el frontend a NUESTRO couch-auth (URL completa; sirve para http://localhost:3000)
+# Cada `sed` va seguido de un `grep -q` que verifica que el cambio se aplicó: si el upstream cambia
+# y el patrón ya no matchea, el build FALLA en vez de seguir en silencio (igual que los patches .js).
+
+# (0) La URL pública tiene que venir del .env, completa y sin barra final (si no, el login y el sync
+# quedan apuntando mal y recién te das cuenta con la app abierta).
+RUN case "${AUTH_BASE_URL}" in \
+      http://*[!/]|https://*[!/]) ;; \
+      *) echo "ERROR: AUTH_BASE_URL='${AUTH_BASE_URL}' (tiene que ser https://dominio, sin barra final; revisá el .env)"; exit 1;; \
+    esac
+
+# (1) Apuntar el frontend a NUESTRO couch-auth (URL completa)
 RUN sed -i "s#https://login1.couchdb.asterics-foundation.org#${AUTH_BASE_URL}#g" \
-    src/js/service/loginService.js
+      src/js/service/loginService.js \
+    && grep -q "${AUTH_BASE_URL}" src/js/service/loginService.js
 
 # (1b) Self-host del repo de tableros: apuntar a NUESTRA copia same-origin en /Asterics-AAC-Data/.
 # Ruta root-relative → funciona en localhost y en cualquier dominio de prod sin cambios, y sin CORS.
 RUN sed -i "s#https://asterics.github.io/Asterics-AAC-Data/#/Asterics-AAC-Data/#g" \
-    src/js/util/constants.js src/js/service/boards/boardService.js
+      src/js/util/constants.js src/js/service/boards/boardService.js \
+    && grep -q '"/Asterics-AAC-Data/"' src/js/util/constants.js \
+    && grep -q '"/Asterics-AAC-Data/"' src/js/service/boards/boardService.js
 
 # (1c) Sync resiliente: el upstream usa `retry: false` (asume server estable). En nuestro setup,
-# cualquier blip transitorio dispara el handler de error → cancela el sync y muestra la X para
-# siempre. Con `retry: true`, PouchDB reintenta solo y no latchea la falla.
-RUN sed -i "s/retry: false/retry: true/g" src/js/service/data/pouchDbAdapter.js
+# cualquier blip transitorio dispara el handler de error → cancela el sync y muestra la X.
+# Con `retry: true`, PouchDB reintenta solo y no latchea la falla.
+# OJO (revisión 2026-09-22): con retry:true, si el server está caído el ícono queda en VERDE
+# (PouchDB avisa la falla como "paused"). Ver docs/runbook-prod.md, test de caída.
+RUN sed -i "s/retry: false/retry: true/g" src/js/service/data/pouchDbAdapter.js \
+    && grep -q "retry: true" src/js/service/data/pouchDbAdapter.js
 
 # (1d) Cache-busting del service worker: el release ya reemplazó #ASTERICS_GRID_VERSION#, así que
 # nuestro serviceWorker.js queda idéntico build a build y el navegador nunca actualiza (sirve el
 # bundle viejo). Versionamos el nombre del cache con ASTERICS_VERSION → cada build cambia el SW.
-RUN sed -i "s/APP_CACHE_NAME = \"app-cache\"/APP_CACHE_NAME = \"app-cache-${ASTERICS_VERSION}\"/" serviceWorker.js
+RUN sed -i "s/APP_CACHE_NAME = \"app-cache\"/APP_CACHE_NAME = \"app-cache-${ASTERICS_VERSION}\"/" serviceWorker.js \
+    && grep -q "app-cache-${ASTERICS_VERSION}" serviceWorker.js
 
 # (1e) AGPL: link visible al código fuente de ESTA versión modificada en la pantalla "Acerca de".
 COPY scripts/patch-about-link.js /tmp/patch-about-link.js
@@ -79,15 +100,22 @@ RUN node /tmp/patch-remove-nav-about-help.js
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/vue-components/views/aboutView.vue \
-    && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" serviceWorker.js
+    && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" serviceWorker.js \
+    && grep -q "ENVIRONMENT = 'PROD'" src/js/util/constants.js
 
-# El repo upstream no commitea package-lock.json, así que `npm ci` falla.
-# Usamos `npm install` (el tag está pineado, así que sigue siendo reproducible en la práctica).
-RUN npm install
+# Dependencias CONGELADAS: el upstream no commitea package-lock.json, así que usamos el nuestro
+# (locks/), que registra la versión exacta de cada paquete. `npm ci` instala exactamente eso: un
+# rebuild (o un parcheo) ya no puede traer versiones distintas de las probadas.
+COPY locks/frontend-package-lock.json /src/package-lock.json
+RUN npm ci --no-audit --no-fund
 RUN npx webpack --config webpack.config.js --env production \
     && node scripts/getServiceWorkerCachePaths.js
+# Lo que NO se publica: dependencias de build y la historia de git (antes quedaban descargables
+# en /node_modules/ y /.git/ del sitio).
+RUN rm -rf node_modules .git
 
-FROM nginx:1.27-alpine
+# nginx de la rama ESTABLE (se republica con parches; 1.27 era mainline y quedó congelada en 2025).
+FROM nginx:stable-alpine
 COPY --from=build /src/ /usr/share/nginx/html/
 # Logos de EBANO (referenciados por el header/manifest/favicon ya parcheados en la etapa build).
 COPY branding/ebano-logo.png                /usr/share/nginx/html/app/img/ebano-logo.png

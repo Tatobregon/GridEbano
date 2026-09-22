@@ -1,5 +1,8 @@
 # Checklist de operación — AsTeRICS Grid (servidor local)
 
+> Esta guía es para la **PC local** (Git Bash + Docker Desktop + Funnel). Para el server de
+> producción, ver `docs/runbook-prod.md` (secciones "Operación diaria" y "Si algo falla").
+
 Guía rápida para operar el servidor y para rescatarlo si algo falla. Tenela a mano.
 
 ---
@@ -21,7 +24,7 @@ Guía rápida para operar el servidor y para rescatarlo si algo falla. Tenela a 
 
 > Los scripts `.sh` se corren en **Git Bash**, parado en la carpeta del proyecto.
 
-**Secretos (están en `docker-compose.yml`):** clave admin de CouchDB (`COUCHDB_PASSWORD`) y secreto de
+**Secretos (están en `.env`, que no se versiona):** clave admin de CouchDB (`COUCHDB_PASSWORD`) y secreto de
 registro (`REGISTER_SECRET`). No hace falta memorizarlos; los scripts los leen solos.
 
 ---
@@ -84,7 +87,7 @@ docker compose up -d --build
 
 - El **volumen `asterics-grid_couchdb-data`** → los datos de todos los usuarios.
 - La carpeta **`backups/`** → los snapshots.
-- El **`docker-compose.yml`** → tiene las claves.
+- El **`.env`** → tiene las claves (guardalas también en el gestor de contraseñas).
 - Las **contraseñas de los usuarios** → si se pierden, sus datos quedan cifrados sin retorno (no hay recuperación por mail).
 
 > Ideal: copiá los backups **fuera de esta PC** (otro disco / nube) cada tanto. Si se muere el disco, el backup no debe morir con él.

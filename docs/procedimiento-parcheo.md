@@ -1,8 +1,9 @@
 # Procedimiento de parcheo de seguridad
 
 Cómo mantener el servidor al día con parches de seguridad **sin** salir de la estrategia de
-"versión congelada". La idea: quedarnos en las mismas versiones mayores (couchdb 3.4, node 18,
-nginx 1.27, y el release pineado de AsTeRICS Grid), pero traer los **fixes de seguridad** que van
+"versión congelada". La idea: quedarnos en las mismas versiones mayores (couchdb 3.4, node 22,
+nginx estable, caddy 2 y el release pineado de AsTeRICS Grid, con las dependencias
+congeladas en `locks/`), pero traer los **fixes de seguridad** que van
 saliendo dentro de esos tags.
 
 ---
@@ -28,7 +29,7 @@ de versión mayor. No se "previenen" los zero-days, se **reduce la ventana de ex
 
 ## Cómo parchear (imágenes base)
 
-Un solo comando, desde Git Bash en la carpeta del proyecto:
+Un solo comando, en la carpeta del proyecto (Git Bash en la PC, o por SSH en el server):
 
 ```bash
 ./scripts/parchear.sh
@@ -36,13 +37,16 @@ Un solo comando, desde Git Bash en la carpeta del proyecto:
 
 Hace, en orden y verificando:
 1. **Backup de seguridad** del volumen (por si algo sale mal).
-2. `docker compose build --pull` → baja la última versión parcheada de `couchdb:3.4`,
-   `node:18-bullseye` y `nginx:1.27-alpine`, y rebuildea.
-3. Levanta y corre `arrancar.sh` (init + Funnel + verificación web/sync).
+2. `docker compose pull` (couchdb, caddy) + `docker compose build --pull` (node, nginx, alpine) →
+   baja la última versión parcheada de `couchdb:3.4`, `caddy:2`, `node:22-bookworm`,
+   `nginx:stable-alpine` y `alpine:3`, y rebuildea. Las dependencias npm NO cambian (`locks/`).
+   (Control extra cada tanto: que esos tags se sigan republicando en Docker Hub. `node:18` y
+   `nginx:1.27` dejaron de actualizarse en 2025 y por eso se cambiaron en 2026-09.)
+3. Levanta y corre `arrancar.sh` (init + Funnel/Caddy + verificación web/sync).
 4. Anota la fecha en `avances/parcheos.log`.
 
 > Si hay imágenes nuevas, el rebuild del frontend es completo (clona el repo + webpack + re-baja los
-> ~285 MB de tableros) y tarda ~10 min. Si no hay nada nuevo, usa cache y es rápido.
+> ~285 MB de tableros solo si cambió `alpine`) y tarda ~10 min. Si no hay nada nuevo, usa cache y es rápido.
 
 **Si algo quedó mal después de parchear:** restaurá el backup que se hizo al principio:
 ```bash
@@ -66,8 +70,11 @@ Cuando quieras adoptar un release nuevo del upstream:
 
 ---
 
-## Nota / mejora futura
+## Notas
 
-El stage `boards` del `Dockerfile.frontend` usa `node:18-bullseye`, así que un parche de Node hace
-re-clonar los ~285 MB de tableros. Si el parcheo se vuelve frecuente y molesto, se puede cambiar ese
-stage a una imagen mínima de git (ej. `alpine/git`) para que los parches de Node no lo invaliden.
+- La etapa `boards` ya usa `alpine:3` + git, así que un parche de Node no obliga a re-bajar los
+  ~285 MB de tableros.
+- **Al cambiar `ASTERICS_TAG`** hay que regenerar los lockfiles de `locks/` (el `package.json` del
+  upstream puede cambiar): en una copia de prueba, `npm install` sobre el tag nuevo, copiar el
+  `package-lock.json` resultante a `locks/frontend-package-lock.json` y `locks/couchauth-package-lock.json`,
+  buildear y probar antes de producción.

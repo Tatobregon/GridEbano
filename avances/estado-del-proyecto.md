@@ -200,7 +200,7 @@ Registro de los baches que aparecieron y cómo se resolvieron (útil si algo sim
 
 ```
 asterics-grid/
-├── docker-compose.yml          ← stack (couchdb + couch-auth + frontend), claves, URLs
+├── docker-compose.yml          ← stack (couchdb + couch-auth + frontend + caddy[prod])
 ├── Dockerfile.frontend         ← build del frontend: mods + boards self-host + nginx reverse-proxy
 ├── Dockerfile.couchauth        ← couch-auth + patch de bloqueo de registro
 ├── nginx/default.conf          ← puerta única: proxy + security headers + rate limiting
@@ -254,7 +254,7 @@ cache-busting del service worker; bloqueo de registro en couch-auth.
 - **Crear usuario:** `./scripts/crear-usuario.sh <usuario> <contraseña 8+>`
 - **Backup:** `./scripts/backup.sh` · **Restore:** `./scripts/restore.sh backups/<archivo>.tgz`
 - **Si algo falla:** `docs/checklist-operacion.md`
-- **Secretos:** en `docker-compose.yml` (clave admin de CouchDB, secreto de registro). Los scripts los leen solos.
+- **Secretos:** en `.env` (no versionado; plantilla `.env.example`). Los scripts los leen solos.
 - **Requisito:** el servicio anda solo con **la PC prendida y Docker Desktop corriendo**.
 
 ---
@@ -263,4 +263,4 @@ cache-busting del service worker; bloqueo de registro en couch-auth.
 
 AsTeRICS Grid es **AGPL-3.0**. Modificamos el código (vía Dockerfiles/patches). Servir una versión
 modificada **obliga a poner el código fuente a disposición de los usuarios** → se cumple publicando
-nuestro fork o un repo con los cambios. **Pendiente** de hacer antes de dar servicio a clientes reales.
+nuestro fork o un repo con los cambios. **Cumplido:** repo público + link en "Acerca de" (ver §8).

@@ -1,7 +1,20 @@
+# Nombre de proyecto FIJO: así el volumen de datos se llama siempre "asterics-grid_couchdb-data",
+# sin importar el nombre de la carpeta donde se clone el repo. Los scripts de backup/restore dependen
+# de este nombre (si la carpeta se llamara distinto, antes el backup salía VACÍO sin avisar).
+name: asterics-grid
+
+# Rotación de logs de Docker para todos los servicios (sin esto crecen sin límite en el server).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   couchdb:
     image: couchdb:3.4
     restart: unless-stopped
+    logging: *logging
     # Healthcheck: couch-auth NO debe arrancar hasta que couchdb responda /_up (listo). Sin esto,
     # en el arranque couch-auth le pega a couchdb antes de tiempo -> ECONNREFUSED -> crashea en loop
     # -> cambia de IP -> nginx (que ya la resolvió) queda apuntando a la IP muerta -> 502 en el login.
@@ -19,9 +32,9 @@ services:
       - "127.0.0.1:5984:5984"   # solo local (admin); al público llega vía nginx /couchdb/
     volumes:
       - couchdb-data:/opt/couchdb/data
-      # SIN :ro a propósito. El entrypoint de couchdb hace `find /opt/couchdb -exec chown`
-      # y, en bind-mounts de Windows, el archivo aparece como root; con :ro el chown falla en
-      # un FS read-only, el find devuelve !=0 y `set -e` mata el arranque (exit 1, sin logs).
+      # SIN :ro a propósito. El entrypoint de couchdb hace `find /opt/couchdb -exec chown` y, si el
+      # archivo no es del usuario couchdb (bind-mount de Windows, o clonado por root en Linux), con :ro
+      # el chown falla en un FS read-only, el find devuelve !=0 y `set -e` mata el arranque (exit 1).
       # Nombre 00-* para que ordene ANTES que el docker.ini del entrypoint: así CouchDB persiste su
       # estado de runtime (hash del admin) en ESE archivo efímero y NO en el nuestro, que queda limpio.
       - ./couchdb-config/docker.ini:/opt/couchdb/etc/local.d/00-custom.ini
@@ -33,8 +46,10 @@ services:
       args:
         ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
     restart: unless-stopped
+    logging: *logging
     environment:
-      DB_SERVER_PUBLIC_URL: ${DB_SERVER_PUBLIC_URL}   # el NAVEGADOR sincroniza acá (nginx → couchdb). Por entorno, en .env
+      # El NAVEGADOR sincroniza acá (nginx → couchdb). SIEMPRE es la URL pública + /couchdb/.
+      DB_SERVER_PUBLIC_URL: "${AUTH_BASE_URL}/couchdb/"
       DB_SERVER_PROTOCOL: http://
       DB_SERVER_HOST: couchdb:5984                   # lo que usa couch-auth interno
       DB_SERVER_USER: admin
@@ -46,7 +61,7 @@ services:
       REGISTER_SECRET: ${REGISTER_SECRET}   # definido en .env (no versionado)
       ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD}   # clave de acceso a la página de admin (en .env)
     ports:
-      - "127.0.0.1:3000:3000"   # solo local (crear-usuario.sh); al público llega vía nginx /auth/
+      - "127.0.0.1:3000:3000"   # solo local (crear-usuario.sh); al público llega vía nginx
     depends_on:
       couchdb:
         condition: service_healthy   # espera el healthcheck: NO arranca hasta que couchdb esté listo
@@ -58,14 +73,40 @@ services:
       args:
         ASTERICS_TAG: "release-2026-06-03-09.11/+0200"
         AUTH_BASE_URL: "${AUTH_BASE_URL}"   # URL pública del sitio (se hornea en el bundle). Por entorno, en .env
-        ASTERICS_VERSION: "localdev-15"
+        # Versión visible en "Acerca de" + nombre del cache del service worker. Al cambiar el frontend,
+        # SUBILA (en .env) para que los navegadores tomen la versión nueva.
+        ASTERICS_VERSION: "${ASTERICS_VERSION:-localdev-15}"
         # Repo de tableros self-hosteado, pineado a un commit (desacople total de asterics.github.io).
         # Para actualizar los tableros: cambiar este SHA y rebuildear el frontend.
         BOARDS_COMMIT: "6c0f0017fd45ebc579cbd79b33eb8f57433cc646"
     restart: unless-stopped
+    logging: *logging
     ports:
-      - "127.0.0.1:9095:80"   # el Funnel (local) apunta acá; no hace falta exponer en la LAN
+      - "127.0.0.1:9095:80"   # local: el Funnel apunta acá. Server: solo para chequeos desde el propio server
     depends_on: [couch-auth]
+
+  # HTTPS de producción: Caddy saca y renueva solo el certificado de Let's Encrypt para SITE_DOMAIN y
+  # le pasa todo al nginx del frontend. Solo arranca con el perfil "prod" (en el .env del server:
+  # COMPOSE_PROFILES=prod). En la PC local no se levanta (ahí el HTTPS lo pone el Funnel).
+  caddy:
+    image: caddy:2
+    profiles: ["prod"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # certificados (NO borrar: Let's Encrypt limita cuántos se piden por semana)
+      - caddy-config:/config
+    depends_on: [frontend]
 
 volumes:
   couchdb-data:
+  caddy-data:
+  caddy-config:

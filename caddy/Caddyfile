@@ -1,0 +1,15 @@
+# Caddy: HTTPS automático (Let's Encrypt) delante del nginx del frontend.
+# Los valores salen del .env del server (SITE_DOMAIN y ACME_EMAIL), vía docker-compose.yml.
+# Solo se usa en producción (perfil "prod").
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_DOMAIN} {
+	# Comprime las respuestas (bundles, tableros JSON) → carga más rápida en conexiones lentas.
+	encode zstd gzip
+
+	# Todo va al nginx del frontend, que es la "puerta única" (app + /auth + /couchdb + /admin).
+	# Caddy agrega X-Forwarded-For con la IP real del cliente; nginx la usa para el rate limit.
+	reverse_proxy frontend:80
+}

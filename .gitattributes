@@ -10,3 +10,6 @@ Dockerfile* text eol=lf
 *.png binary
 *.jpg binary
 *.ico binary
+
+# Config de Caddy: LF.
+Caddyfile text eol=lf
