@@ -12,6 +12,9 @@ avances/parcheos.log
 # Logs transitorios de build/ejecución
 *.log
 
+# Cache local del test de recuperación (se baja sola)
+.sjcl-cache/
+
 # Ayudantes temporales del despliegue (no van al repo)
 /actualizar-local.sh
 /subir-a-github.sh

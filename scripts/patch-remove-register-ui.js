@@ -62,6 +62,22 @@ patch(
     '<!-- registro removido -->'
 );
 
+// 3b) index.html — saca del MENÚ de navegación los dos botones "Agregar usuario online/offline".
+// Sin esto, el menú ofrece dos opciones que terminan en la pantalla de login (porque las rutas están
+// neutralizadas más abajo): un callejón sin salida confuso para el usuario.
+patch(
+    'index.html',
+    'menú: agregar usuario online',
+    /\s*<li class="hide-mobile"><a tabindex="6" href="#register"[\s\S]*?<\/li>/,
+    '\n                    <!-- "Agregar usuario online" quitado: las cuentas las crea el admin -->'
+);
+patch(
+    'index.html',
+    'menú: agregar usuario offline',
+    /\s*<li class="hide-mobile"><a tabindex="7" href="#add"[\s\S]*?<\/li>/,
+    '\n                    <!-- "Agregar usuario offline" quitado: la app es solo-login -->'
+);
+
 // 4a) router.js — defensa en profundidad: #register renderiza el Login (no el form de registro).
 patch(
     'src/js/router.js',

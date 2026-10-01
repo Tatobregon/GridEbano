@@ -4,35 +4,56 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Crear usuario — Ébano Soluciones</title>
+<title>Administración — Ébano Soluciones</title>
+<!-- sjcl: la MISMA librería de cifrado que usa la app, servida desde este mismo dominio.
+     Se usa para abrir los datos del usuario ACÁ, en el navegador del admin (ver más abajo). -->
+<script src="/app/lib/sjcl.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
          background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex;
          align-items: center; justify-content: center; padding: 20px; }
   .card { background: #1e293b; border: 1px solid #334155; border-radius: 14px;
-          padding: 32px 28px; width: 100%; max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+          padding: 32px 28px; width: 100%; max-width: 440px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
   h1 { font-size: 1.25rem; margin: 0 0 4px; }
   .sub { color: #94a3b8; font-size: .85rem; margin: 0 0 24px; }
   label { display: block; font-size: .82rem; color: #cbd5e1; margin: 14px 0 6px; }
-  input { width: 100%; padding: 11px 12px; border-radius: 9px; border: 1px solid #475569;
+  input, select { width: 100%; padding: 11px 12px; border-radius: 9px; border: 1px solid #475569;
           background: #0f172a; color: #e2e8f0; font-size: 1rem; }
-  input:focus { outline: none; border-color: #38bdf8; }
+  input:focus, select:focus { outline: none; border-color: #38bdf8; }
   button { width: 100%; margin-top: 22px; padding: 12px; border: 0; border-radius: 9px;
            background: #38bdf8; color: #0f172a; font-weight: 600; font-size: 1rem; cursor: pointer; }
   button:hover { background: #0ea5e9; }
   button:disabled { opacity: .5; cursor: default; }
-  .msg { margin-top: 16px; font-size: .88rem; padding: 10px 12px; border-radius: 8px; display: none; }
+  button.sec { background: #334155; color: #e2e8f0; }
+  button.sec:hover { background: #475569; }
+  .msg { margin-top: 16px; font-size: .88rem; padding: 10px 12px; border-radius: 8px; display: none;
+         overflow-wrap: anywhere; }
   .msg.ok { display: block; background: #064e3b; color: #6ee7b7; }
   .msg.err { display: block; background: #4c0519; color: #fda4af; }
+  .msg.info { display: block; background: #1e3a5f; color: #93c5fd; }
   .hint { color: #64748b; font-size: .72rem; margin-top: 4px; }
+  /* Solapas */
+  .tabs { display: flex; gap: 8px; margin-bottom: 4px; }
+  .tabs button { margin: 0; flex: 1; padding: 9px 6px; font-size: .84rem; background: #334155; color: #94a3b8; }
+  .tabs button.on { background: #38bdf8; color: #0f172a; }
+  .panel { display: none; }
+  .panel.on { display: block; }
   #step2 { display: none; }
+  /* Resumen de lo encontrado */
+  .resumen { margin-top: 16px; background: #0f172a; border: 1px solid #334155; border-radius: 10px;
+             padding: 12px 14px; font-size: .85rem; display: none; }
+  .resumen.on { display: block; }
+  .resumen b { color: #e2e8f0; }
+  .resumen ul { margin: 8px 0 0; padding-left: 18px; color: #94a3b8; max-height: 190px; overflow: auto; }
+  .resumen li { margin: 2px 0; }
+  .nota { color: #64748b; font-size: .72rem; margin-top: 10px; line-height: 1.45; }
 </style>
 </head>
 <body>
   <div class="card">
-    <h1>Crear usuario</h1>
-    <p class="sub">Ébano Soluciones — panel de administración</p>
+    <h1>Administración</h1>
+    <p class="sub">Ébano Soluciones — comunicadores</p>
 
     <!-- Paso 1: clave de acceso -->
     <div id="step1">
@@ -42,24 +63,53 @@
       <div id="msg1" class="msg"></div>
     </div>
 
-    <!-- Paso 2: crear usuario -->
+    <!-- Paso 2: las dos herramientas -->
     <div id="step2">
-      <label for="username">Usuario</label>
-      <input id="username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false">
-      <div class="hint">minúsculas, números, _ o - · 3 a 16 caracteres</div>
-      <label for="password">Contraseña</label>
-      <input id="password" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
-      <div class="hint">mínimo 8 caracteres · se guarda EXACTA como la escribís (sin autocorrección) · anotala</div>
-      <button id="btnCreate">Crear usuario</button>
-      <div id="msg2" class="msg"></div>
+      <div class="tabs">
+        <button id="tabCrear" class="on">Crear usuario</button>
+        <button id="tabRecuperar">Recuperar comunicador</button>
+      </div>
+
+      <!-- ── Crear usuario ────────────────────────────────────────────────── -->
+      <div id="panelCrear" class="panel on">
+        <label for="username">Usuario</label>
+        <input id="username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="16">
+        <div class="hint">minúsculas, números, _ o - · 3 a 16 caracteres</div>
+        <label for="password">Contraseña</label>
+        <input id="password" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
+        <div class="hint">mínimo 8 caracteres · se guarda EXACTA como la escribís (sin autocorrección) · anotala</div>
+        <button id="btnCreate">Crear usuario</button>
+        <div id="msg2" class="msg"></div>
+      </div>
+
+      <!-- ── Recuperar comunicador ────────────────────────────────────────── -->
+      <div id="panelRecuperar" class="panel">
+        <label for="recUsuario">Usuario</label>
+        <select id="recUsuario"><option value="">(cargando…)</option></select>
+        <label for="recClave">Contraseña de ese usuario</label>
+        <input id="recClave" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <div class="hint">la que tenés anotada · sin ella los datos no se pueden abrir</div>
+        <button id="btnLeer">Leer comunicador</button>
+        <div id="msgRec" class="msg"></div>
+        <div id="resumen" class="resumen"></div>
+        <button id="btnDescargar" class="sec" style="display:none">Descargar archivo .grd</button>
+        <div class="nota">
+          Para restaurarlo: entrá a la app con ese usuario, andá a <b>Gestionar tableros</b> → botón de
+          los tres puntos → <b>Restaurar copia de seguridad</b> y elegí este archivo. Reemplaza la
+          configuración actual por la del archivo.<br>
+          El <b>.grd</b> sale sin cifrar, así que guardalo donde guardás las contraseñas.
+        </div>
+      </div>
     </div>
   </div>
 
 <script>
   let accessPassword = "";
   const $ = id => document.getElementById(id);
-  const show = (el, text, ok) => { el.className = "msg " + (ok ? "ok" : "err"); el.textContent = text; };
+  const show = (el, text, tipo) => { el.className = "msg " + (tipo || "err"); el.textContent = text; };
+  const hide = (el) => { el.className = "msg"; el.textContent = ""; };
 
+  // ── Paso 1: clave de acceso ─────────────────────────────────────────────────
   $("btnAccess").addEventListener("click", async () => {
     const pw = $("access").value;
     if (!pw) return;
@@ -74,21 +124,46 @@
         $("step1").style.display = "none";
         $("step2").style.display = "block";
         $("username").focus();
+        cargarUsuarios();
       } else {
-        show($("msg1"), "Clave de acceso incorrecta.", false);
+        show($("msg1"), "Clave de acceso incorrecta.");
       }
     } catch (e) {
-      show($("msg1"), "No se pudo conectar con el servidor.", false);
+      show($("msg1"), "No se pudo conectar con el servidor.");
     }
     $("btnAccess").disabled = false;
   });
   $("access").addEventListener("keydown", e => { if (e.key === "Enter") $("btnAccess").click(); });
 
+  // ── Solapas ─────────────────────────────────────────────────────────────────
+  const solapa = (cual) => {
+    $("tabCrear").classList.toggle("on", cual === "crear");
+    $("tabRecuperar").classList.toggle("on", cual === "recuperar");
+    $("panelCrear").classList.toggle("on", cual === "crear");
+    $("panelRecuperar").classList.toggle("on", cual === "recuperar");
+  };
+  $("tabCrear").addEventListener("click", () => solapa("crear"));
+  $("tabRecuperar").addEventListener("click", () => { solapa("recuperar"); cargarUsuarios(); });
+
+  // ── Crear usuario ───────────────────────────────────────────────────────────
+  // Mismas reglas que valida el servidor (couch-auth): así el error se ve ANTES de mandar nada.
+  const USUARIO_OK = /^[a-z0-9][a-z0-9_-]{2,15}$/;
+  const errorUsuario = (u) => {
+    if (!u) return "Escribí un nombre de usuario.";
+    if (u.length < 3) return "El usuario necesita al menos 3 caracteres.";
+    if (u.length > 16) return "El usuario no puede tener más de 16 caracteres (este tiene " + u.length + ").";
+    if (!/^[a-z0-9]/.test(u)) return "El usuario tiene que empezar con una letra o un número.";
+    if (!USUARIO_OK.test(u)) return "El usuario solo puede tener minúsculas, números, guion bajo o guion medio.";
+    return "";
+  };
+
   $("btnCreate").addEventListener("click", async () => {
     const username = $("username").value.trim().toLowerCase();
     const password = $("password").value.trim();
-    if (!username || !password) { show($("msg2"), "Completá usuario y contraseña.", false); return; }
-    if (password.length < 8) { show($("msg2"), "La contraseña debe tener al menos 8 caracteres.", false); return; }
+    const errU = errorUsuario(username);
+    if (errU) { show($("msg2"), errU); return; }
+    if (!password) { show($("msg2"), "Escribí una contraseña."); return; }
+    if (password.length < 8) { show($("msg2"), "La contraseña debe tener al menos 8 caracteres."); return; }
     $("btnCreate").disabled = true;
     try {
       const r = await fetch("/admin/crear-usuario", {
@@ -97,19 +172,240 @@
       });
       const data = await r.json().catch(() => ({}));
       if (r.ok && data.success) {
-        show($("msg2"), "✅ Usuario \"" + username + "\" creado. ¡Anotá la contraseña!", true);
+        show($("msg2"), "✅ Usuario \"" + username + "\" creado. ¡Anotá la contraseña!", "ok");
         $("username").value = ""; $("password").value = "";
+        usuariosCache = null;   // la lista del otro panel quedó vieja
       } else {
-        let m = data.error || (data.validationErrors ? JSON.stringify(data.validationErrors) : "No se pudo crear el usuario.");
-        if (/already in use|exists/i.test(JSON.stringify(data))) m = "Ese usuario ya existe.";
-        show($("msg2"), "⚠️ " + m, false);
+        let m = "No se pudo crear el usuario.";
+        if (data.validationErrors) {
+          // { username: ["..."], password: ["..."] } -> texto legible
+          m = Object.values(data.validationErrors).flat().join(" · ");
+        } else if (data.error) {
+          m = data.error;
+        }
+        if (/already in use|exists|taken/i.test(JSON.stringify(data))) m = "Ese usuario ya existe.";
+        show($("msg2"), "⚠️ " + m);
       }
     } catch (e) {
-      show($("msg2"), "No se pudo conectar con el servidor.", false);
+      show($("msg2"), "No se pudo conectar con el servidor.");
     }
     $("btnCreate").disabled = false;
   });
   $("password").addEventListener("keydown", e => { if (e.key === "Enter") $("btnCreate").click(); });
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+   ║ LOGICA-PURA-INICIO                                                       ║
+   ║ Todo lo de acá abajo NO toca la pantalla: son funciones puras que se      ║
+   ║ prueban aparte en scripts/test-recuperar-comunicador.js (ese test extrae  ║
+   ║ este mismo bloque del archivo y lo corre contra datos cifrados de verdad).║
+   ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+  // Cómo cifra la app (src/js/service/data/encryptionService.js del upstream):
+  //   claveBase = sha256_hex('STATIC_USER_PW_SALT' + contraseña)      <- es lo que manda al login
+  //   claveReal = sha256_hex(sal + claveBase)                         <- con esta cifra cada documento
+  //   documento = sjcl.encrypt(claveReal, JSON.stringify(objeto), {iter: 1000})
+  // La "sal" es el nombre de usuario desde la versión 7 del modelo de datos. Antes era el id del
+  // documento de configuración, así que probamos las dos cosas y así sirve para datos viejos también.
+  const SAL_FIJA = 'STATIC_USER_PW_SALT';
+  const hex256 = (s) => sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(s));
+
+  function clavesCandidatas(documentos, usuario, contrasena) {
+    const claveBase = hex256(SAL_FIJA + contrasena);
+    const sales = [];
+    const sumar = (s) => { if (s && sales.indexOf(s) === -1) sales.push(s); };
+    sumar(String(usuario).toLowerCase());
+    sumar(String(usuario));
+    (documentos || []).forEach((d) => { if (d && d.modelName === 'MetaData') sumar(d._id); });
+    return sales.map((s) => hex256('' + s + claveBase));
+  }
+
+  function descifrarUno(doc, claves) {
+    for (let i = 0; i < claves.length; i++) {
+      try {
+        return JSON.parse(sjcl.decrypt(claves[i], doc.encryptedDataBase64));
+      } catch (e) { /* sal equivocada: probamos la siguiente */ }
+    }
+    return null;
+  }
+
+  // Devuelve { objetos, fallidos }. Cede el control cada pocos documentos para que la página no se
+  // congele mientras descifra (un comunicador con imágenes puede ser varios MB).
+  async function descifrarTodo(documentos, usuario, contrasena, avisar) {
+    const claves = clavesCandidatas(documentos, usuario, contrasena);
+    const objetos = [], fallidos = [];
+    for (let i = 0; i < documentos.length; i++) {
+      const obj = descifrarUno(documentos[i], claves);
+      if (obj) {
+        obj._id = documentos[i]._id;
+        objetos.push(obj);
+      } else {
+        fallidos.push(documentos[i]._id);
+      }
+      if (i % 5 === 4) {
+        if (avisar) avisar(i + 1, documentos.length);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+    return { objetos: objetos, fallidos: fallidos };
+  }
+
+  // Arma el contenido de un .grd: exactamente la forma que genera la app en "Guardar copia de
+  // seguridad" y que espera su importador (grids + metadata + dictionaries).
+  function armarGrd(objetos) {
+    const grd = {};
+    grd.grids = objetos.filter((o) => o.modelName === 'GridData');
+    const meta = objetos.filter((o) => o.modelName === 'MetaData')[0];
+    if (meta) grd.metadata = meta;
+    const dicts = objetos.filter((o) => o.modelName === 'Dictionary');
+    if (dicts.length) grd.dictionaries = dicts;
+    return grd;
+  }
+
+  // Los nombres de tablero son objetos por idioma ({es: "...", en: "..."}).
+  function etiqueta(label) {
+    if (!label) return '(sin nombre)';
+    if (typeof label === 'string') return label;
+    const vals = Object.keys(label).map((k) => label[k]).filter((v) => !!v);
+    return label.es || label['es-AR'] || label.en || vals[0] || '(sin nombre)';
+  }
+
+  function nombreArchivo(usuario, fecha) {
+    const d = fecha || new Date();
+    const p = (n) => (n < 10 ? '0' : '') + n;
+    return usuario + '_' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+         + '_' + p(d.getHours()) + p(d.getMinutes()) + '_comunicador.grd';
+  }
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+   ║ LOGICA-PURA-FIN                                                          ║
+   ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+  // ── Recuperar comunicador (pantalla) ────────────────────────────────────────
+  let usuariosCache = null;
+  let grdListo = null;      // { nombre, texto } una vez que se leyó y descifró bien
+
+  async function cargarUsuarios() {
+    if (usuariosCache) return;
+    const sel = $("recUsuario");
+    sel.innerHTML = '<option value="">(cargando…)</option>';
+    try {
+      const r = await fetch("/admin/listar-usuarios", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessPassword })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) throw new Error(data.error || "error");
+      usuariosCache = data.usuarios || [];
+      if (!usuariosCache.length) {
+        sel.innerHTML = '<option value="">(todavía no hay usuarios)</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">— elegí un usuario —</option>'
+        + usuariosCache.map((u) => '<option></option>').join("");
+      // El texto se setea por separado para no inyectar HTML con nombres de usuario.
+      usuariosCache.forEach((u, i) => { const o = sel.options[i + 1]; o.value = u; o.textContent = u; });
+    } catch (e) {
+      sel.innerHTML = '<option value="">(no pude cargar la lista)</option>';
+    }
+  }
+
+  function limpiarResultado() {
+    grdListo = null;
+    $("btnDescargar").style.display = "none";
+    const r = $("resumen"); r.className = "resumen"; r.textContent = "";
+  }
+  $("recUsuario").addEventListener("change", () => { limpiarResultado(); hide($("msgRec")); });
+  $("recClave").addEventListener("input", limpiarResultado);
+
+  $("btnLeer").addEventListener("click", async () => {
+    const usuario = $("recUsuario").value;
+    const clave = $("recClave").value.trim();
+    limpiarResultado();
+    if (!usuario) { show($("msgRec"), "Elegí un usuario."); return; }
+    if (!clave) { show($("msgRec"), "Escribí la contraseña de ese usuario."); return; }
+    if (typeof sjcl === "undefined") {
+      show($("msgRec"), "No se pudo cargar la librería de cifrado. Recargá la página.");
+      return;
+    }
+    $("btnLeer").disabled = true;
+    show($("msgRec"), "Buscando los datos en el servidor…", "info");
+    try {
+      const r = await fetch("/admin/datos-usuario", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessPassword, usuario })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) {
+        show($("msgRec"), "⚠️ " + (data.error || "No pude leer los datos de ese usuario."));
+        $("btnLeer").disabled = false;
+        return;
+      }
+      const documentos = data.documentos || [];
+      if (!documentos.length) {
+        show($("msgRec"), "Ese usuario todavía no tiene tableros guardados en el servidor.", "info");
+        $("btnLeer").disabled = false;
+        return;
+      }
+      show($("msgRec"), "Abriendo " + documentos.length + " documentos…", "info");
+      const res = await descifrarTodo(documentos, usuario, clave, (hechos, total) => {
+        show($("msgRec"), "Abriendo " + hechos + " de " + total + "…", "info");
+      });
+      if (!res.objetos.length) {
+        show($("msgRec"), "❌ No pude abrir los datos: la contraseña no coincide con la de ese usuario.");
+        $("btnLeer").disabled = false;
+        return;
+      }
+      const grd = armarGrd(res.objetos);
+      const texto = JSON.stringify(grd);
+      grdListo = { nombre: nombreArchivo(usuario), texto: texto };
+
+      // Resumen para que confirmes ANTES de descargar
+      const caja = $("resumen");
+      caja.textContent = "";
+      const linea = (html) => { const p = document.createElement("div"); p.innerHTML = html; caja.appendChild(p); };
+      const mb = (texto.length / 1048576).toFixed(1);
+      linea("<b>" + grd.grids.length + "</b> tableros"
+          + (grd.dictionaries ? " · <b>" + grd.dictionaries.length + "</b> diccionarios" : "")
+          + (grd.metadata ? " · con la configuración del usuario" : "")
+          + " · <b>" + mb + " MB</b>");
+      const ul = document.createElement("ul");
+      grd.grids.slice(0, 40).forEach((g) => {
+        const li = document.createElement("li");
+        li.textContent = etiqueta(g.label);
+        ul.appendChild(li);
+      });
+      if (grd.grids.length > 40) {
+        const li = document.createElement("li");
+        li.textContent = "… y " + (grd.grids.length - 40) + " más";
+        ul.appendChild(li);
+      }
+      caja.appendChild(ul);
+      if (res.fallidos.length) {
+        linea('<span style="color:#fda4af">Atención: ' + res.fallidos.length
+            + " documento(s) no se pudieron abrir y quedan afuera del archivo.</span>");
+      }
+      caja.className = "resumen on";
+      show($("msgRec"), "✅ Datos abiertos. Revisá los nombres de los tableros y descargá.", "ok");
+      $("btnDescargar").style.display = "block";
+    } catch (e) {
+      show($("msgRec"), "No se pudo conectar con el servidor.");
+    }
+    $("btnLeer").disabled = false;
+  });
+
+  $("btnDescargar").addEventListener("click", () => {
+    if (!grdListo) return;
+    const blob = new Blob([grdListo.texto], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = grdListo.nombre;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    show($("msgRec"), "✅ Descargado: " + grdListo.nombre, "ok");
+  });
+  $("recClave").addEventListener("keydown", e => { if (e.key === "Enter") $("btnLeer").click(); });
 </script>
 </body>
 </html>

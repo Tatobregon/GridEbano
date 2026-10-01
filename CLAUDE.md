@@ -31,7 +31,8 @@ Navegador ──HTTPS──► [Caddy (solo prod) | Tailscale Funnel (local)] �
    nginx = puerta única, same-origin:
      /                          → build estático de AsTeRICS Grid + mirror de tableros /Asterics-AAC-Data/
      /auth/login|logout|logout-all|refresh → couch-auth:3000   (resto de /auth/ → 404)
-     /admin/*, /crear-usuario-ebano-soluciones → panel de alta de usuarios (couch-auth)
+     /admin/*, /crear-usuario-ebano-soluciones → panel de admin (couch-auth): alta de usuarios
+                                y recuperación de comunicadores (.grd)
      /couchdb/<base de usuario> → couchdb:5984   (/couchdb/_* → 404: sin Fauxton ni _session públicos)
      /user/*, /api/*, /.git, /node_modules → 404
 ```
@@ -65,6 +66,14 @@ y en prod `COMPOSE_PROFILES=prod`, `SITE_DOMAIN`, `ACME_EMAIL`, `RCLONE_DESTINO`
    (rclone) queda para la PC o para copiar a otro proveedor.
 6. **Versión congelada**: tag del upstream + commit de tableros (`BOARDS_COMMIT`) + dependencias
    congeladas en `locks/` (se instalan con `npm ci`).
+7. **Recuperación por usuario = archivo `.grd` desde el panel de admin** (no cirugía en la base). El
+   servidor entrega los documentos CIFRADOS y el **navegador del admin los descifra** con la
+   contraseña del usuario: esa contraseña nunca llega al servidor. El `.grd` se restaura con la
+   función propia de la app ("Gestionar tableros → Restaurar copia de seguridad"), que reemplaza la
+   configuración y le pone ids nuevos a los tableros, así no hay conflictos de sync.
+   **Etapa 1 (hecha):** el estado actual. **Etapa 2 (pendiente):** puntos de recuperación por fecha,
+   con volcados lógicos por usuario en el backup nocturno (solo de los usuarios que cambiaron) +
+   selector de fecha en el panel. Ver `docs/runbook-prod.md`, "Recuperar el comunicador de un usuario".
 
 ## Modificaciones al upstream (todas en tiempo de build, sin fork)
 
@@ -84,8 +93,14 @@ los patches `.js` abortan si no encuentran su ancla):
 7. `node_modules/` y `.git/` se borran antes de copiar al nginx (no se publican).
 
 `Dockerfile.couchauth`: `patch-couchauth.js` (guard de registro) y `patch-admin-endpoints.js`
-(`/admin/verificar` y `/admin/crear-usuario`; el hash de la contraseña replica al de la app:
-`sha256('STATIC_USER_PW_SALT' + clave)`). Runtime en `node:22-bookworm-slim`, usuario `node`.
+(4 endpoints, todos con `ADMIN_UI_PASSWORD`):
+- `/admin/verificar` — valida la clave de acceso del panel.
+- `/admin/crear-usuario` — crea la cuenta; el hash de la contraseña replica al de la app
+  (`sha256('STATIC_USER_PW_SALT' + clave)`), si no el login nunca matchea.
+- `/admin/listar-usuarios` — nombres existentes (para el desplegable del panel).
+- `/admin/datos-usuario` — documentos de un usuario **tal cual, cifrados** (GridData/MetaData/
+  Dictionary). No descifra nada y no recibe la contraseña del usuario.
+Runtime en `node:22-bookworm-slim`, usuario `node`.
 
 ## Trampas conocidas (ya resueltas; no reintroducir)
 
@@ -105,7 +120,16 @@ los patches `.js` abortan si no encuentran su ancla):
 - **Cifrado**: la clave de cifrado de los datos se deriva del mismo hash que la app manda al login,
   así que NO es E2E frente a quien opera el servidor. No prometer eso a clientes.
 - **Restore** (`restore.sh`) restaura TODO el volumen; no sirve para recuperar lo que borró un solo
-  usuario (su dispositivo re-sube el borrado). Pendiente: script de restore por usuario.
+  usuario (su dispositivo re-sube el borrado: el borrado es una revisión MÁS NUEVA y gana). Para un
+  solo usuario se usa el `.grd` del panel de admin (decisión 7).
+- **El `$` del nombre de la base va como `%24` en las URLs de CouchDB.** Sin escapar da 404. Afecta
+  a `borrar-usuario.sh` y al endpoint `/admin/datos-usuario`.
+- **El nombre de la base NUNCA se arma con texto del navegador**: se resuelve desde `auth-users`
+  (`doc.key` = usuario, claves de `doc.personalDBs` = bases). Así no se puede pedir una base ajena.
+- **El panel de admin hace varios pedidos por operación**: la zona de rate limit `admin` está en
+  20r/m con burst 10. Con 6r/m el propio admin se trababa.
+- **`/admin/datos-usuario` puede devolver varios MB** (imágenes de tableros en base64): la location
+  `/admin/` necesita `proxy_read_timeout 300s`.
 
 ## Archivos
 
@@ -115,7 +139,7 @@ Dockerfile.frontend       build del frontend con todas las modificaciones
 Dockerfile.couchauth      couch-auth + patches
 caddy/Caddyfile           HTTPS de producción
 nginx/default.conf        puerta única: proxy, lista blanca de rutas, headers, rate limits, IP real
-nginx/admin-crear-usuario.html   panel de alta de usuarios
+nginx/admin-crear-usuario.html   panel de admin: alta de usuarios + recuperar comunicador (.grd)
 couchdb-config/docker.ini single-node (sin CORS: todo es same-origin)
 locks/                    package-lock.json congelados (frontend y couch-auth)
 scripts/lib.sh            funciones comunes de los scripts
@@ -124,6 +148,8 @@ scripts/preparar-server.sh    prepara un Ubuntu 24.04 nuevo (Docker, firewall, f
 scripts/verificar-sitio.sh    chequeo desde afuera: lo necesario anda, lo sensible da 404
 scripts/crear-usuario.sh / borrar-usuario.sh
 scripts/backup.sh / backup-offsite.sh / restore.sh / parchear.sh
+scripts/test-recuperar-comunicador.js   prueba el descifrado y el armado del .grd (sin stack)
+scripts/test-endpoints-admin.js         prueba los endpoints de admin contra un CouchDB simulado
 docs/runbook-prod.md      despliegue y operación en DonWeb (paso a paso)
 docs/checklist-operacion.md   rescate en la PC local
 avances/                  estado del proyecto, auditorías y revisiones

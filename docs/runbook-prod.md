@@ -44,121 +44,74 @@ Solo Caddy da a internet. CouchDB, couch-auth y nginx están atados a `127.0.0.1
 ## Fase 0 — Qué tenés que tener a mano
 
 - [ ] Tu gestor de contraseñas abierto (vas a guardar varias claves nuevas).
-- [ ] El zip con los cambios (`GridEbano-actualizado.zip`).
+- [ ] La carpeta del proyecto en tu PC (ya tiene los cambios nuevos aplicados).
 - [ ] Acceso al panel de DonWeb (para contratar el server).
 - [ ] Acceso al panel DNS de tu dominio (DonWeb u otro).
 - [ ] Un mail para los avisos de Let's Encrypt.
 
 ---
 
-## Fase 1 — [PC] Poner los cambios en el repo y probarlos en local (~45 min)
+## Fase 1 — [PC] Actualizar el entorno local y subirlo a GitHub (~30 min)
 
-La idea es probar todo en tu PC **antes** de tocar el server: si algo del build nuevo falla, que
-falle acá.
+Los archivos nuevos **ya están aplicados** en la carpeta del proyecto de tu PC
+(`J:\PC vieja\Grid local\Servidor LOCAL GRID\asterics-grid`). Queda correr el rebuild, probar que la
+app sigue igual y subir todo a GitHub, que es de donde lo va a clonar el server.
 
-### 1.1 Sacar los lockfiles de las imágenes que hoy funcionan
+### 1.1 Abrir Git Bash en la carpeta del proyecto
 
-**Por qué:** el `npm install` de antes elegía las versiones de las dependencias el día del build.
-Ahora las congelamos, y las mejores versiones para congelar son las que ya probaste. Están adentro
-de las imágenes que tenés corriendo. Hacelo **antes** de copiar mis archivos.
-
-```bash
-export MSYS_NO_PATHCONV=1
-./scripts/arrancar.sh            # si el stack no estaba arriba
-mkdir -p locks-tuyos
-docker compose cp couch-auth:/app/package-lock.json locks-tuyos/couchauth-package-lock.json
-docker compose cp frontend:/usr/share/nginx/html/package-lock.json locks-tuyos/frontend-package-lock.json
-ls -l locks-tuyos
-```
-
-**Tenés que ver:** dos archivos de unos 400 KB cada uno.
-
-**Si dice "no such file":** esa imagen no tiene el lockfile. No pasa nada: en el zip vienen unos que
-generé y probé (build completo del frontend y login de couch-auth con Node 22). Seguí igual.
-
-### 1.2 Chequear el nombre del volumen de datos
+En el Explorador, entrá a la carpeta del proyecto, clic derecho en un espacio vacío → *Mostrar más
+opciones* → **Git Bash Here**. O, si ya tenés una ventana abierta:
 
 ```bash
-docker volume ls | grep couchdb-data
+cd "/j/PC vieja/Grid local/Servidor LOCAL GRID/asterics-grid"
 ```
 
-**Tenés que ver:** `asterics-grid_couchdb-data`.
+> Los comandos de esta guía son de **Git Bash**, no de PowerShell.
 
-**Si ves otro prefijo** (por ejemplo `gridebano_couchdb-data`): tu carpeta no se llama
-`asterics-grid`. Corré `docker compose down` **ahora** (antes de copiar los archivos), así no
-quedan contenedores viejos ocupando los puertos. Tus datos de prueba quedan en ese volumen viejo y
-el stack nuevo arranca con la base vacía, que para probar está bien.
-
-### 1.3 Crear una rama y copiar los archivos nuevos
+### 1.2 Un solo comando que hace todo
 
 ```bash
-git status                       # tiene que estar limpio (sin cambios sin commitear)
-git checkout -b despliegue-donweb
+bash actualizar-local.sh
 ```
 
-Descomprimí `GridEbano-actualizado.zip` en cualquier lado y **copiá todo su contenido encima de tu
-carpeta del proyecto**, reemplazando los archivos. Después:
+Hace seis cosas, en orden, y te va diciendo cuál va:
+
+1. Ajusta el `.env`: saca `DB_SERVER_PUBLIC_URL` (ahora se arma sola) y agrega `ASTERICS_VERSION`,
+   que es lo que hace que los navegadores tomen el build nuevo. Deja una copia en `.env.backup`.
+2. Busca `docker.exe` aunque no esté en el PATH de Git Bash.
+3. Guarda **tus** lockfiles, sacándolos de los contenedores que ya venís usando.
+4. Rebuildea con las imágenes nuevas (Node 22, nginx estable).
+5. Corre `arrancar.sh`: crea las bases y la vista `view-usernames`, reinicia y verifica.
+6. Corre `verificar-sitio.sh`: chequea que ande lo que la app necesita y que lo sensible dé 404.
+
+**Tenés que ver:** el rebuild sin `ERROR`, después **TODO ARRIBA**, y al final la lista del chequeo
+con todo en `OK`. La primera vez tarda 10-15 minutos.
+
+**Si algo falla:**
+- *"Docker no responde"*: abrí Docker Desktop, esperá a que diga "Engine running" y repetí el comando.
+- *"AUTH_BASE_URL … sin barra final"*: revisá esa línea del `.env`.
+- *`npm ci` con "lock file out of sync"*: volvé a los lockfiles del repo con
+  `git checkout -- locks/` y repetí.
+- El script es repetible: si se corta, lo arreglás y lo volvés a correr sin miedo.
+
+### 1.3 Probar que la app quedó igual
+
+Abrí la URL del Funnel y recargá con `Ctrl+F5` (la primera vez).
+
+- Logo EBANO y pantalla solo de login.
+- Entrás con tu usuario de prueba y la nube queda en verde.
+- Anda el reloj de dwell y cargan los tableros predefinidos.
+
+### 1.4 Subir los cambios a GitHub
 
 ```bash
-cp locks-tuyos/*.json locks/     # tus lockfiles pisan los míos (si el 1.1 salió bien)
-rm -r locks-tuyos
-git status
+bash subir-a-github.sh
 ```
 
-**Tenés que ver:** modificados `docker-compose.yml`, los dos Dockerfiles, `nginx/default.conf`,
-`couchdb-config/docker.ini`, `.env.example`, varios scripts y docs; nuevos `caddy/`, `locks/`,
-`scripts/lib.sh`, `scripts/preparar-server.sh` y `scripts/verificar-sitio.sh`. En VS Code, en la
-pestaña Source Control, podés ver el diff de cada archivo.
+Te muestra la lista de archivos, te pide confirmación (`si`) y recién ahí commitea y pushea.
+Marca los scripts como ejecutables, que en Windows no se registra solo y en Linux hace falta.
 
-### 1.4 Ajustar tu `.env` local
-
-Abrí tu `.env` (el de la PC) y:
-- **Borrá** la línea `DB_SERVER_PUBLIC_URL=...`. Ya no se usa: ahora se arma sola con `AUTH_BASE_URL`.
-- **Agregá** `ASTERICS_VERSION=localdev-16`. Subir la versión hace que los navegadores tomen el
-  build nuevo en lugar del que tienen cacheado.
-- Dejá `COMPOSE_PROFILES`, `SITE_DOMAIN` y `ACME_EMAIL` **sin poner**: Caddy es solo para el server.
-- Si alguna clave tiene caracteres como `@ : / # ? %`, cambiala por una de solo letras y números.
-
-### 1.5 Rebuild con las imágenes nuevas
-
-```bash
-docker compose up -d --build     # la primera vez tarda 10-15 min (baja Node 22, nginx estable, etc.)
-./scripts/arrancar.sh
-```
-
-**Tenés que ver:** el build termina sin `ERROR`, y `arrancar.sh` termina en **TODO ARRIBA**.
-
-**Si el build falla:**
-- En `ERROR: AUTH_BASE_URL=...`: revisá el `.env`. Tiene que ser `https://...` completo, sin barra al final.
-- En `npm ci` con "lock file out of sync": el lockfile no corresponde. Volvé a los míos con
-  `git checkout -- locks/` y rebuildeá.
-- Cualquier otra cosa: copiame las últimas 30 líneas.
-
-### 1.6 Probar que la app está igual que antes
-
-1. Abrí la URL del Funnel (o `http://localhost:9095`). Si ves la versión vieja, recargá con `Ctrl+F5`.
-2. Logo EBANO, pantalla solo de login, entrar con tu usuario de prueba, la nube en verde.
-3. Probá el reloj de dwell y que carguen los tableros predefinidos.
-4. Chequeo de seguridad automático:
-   ```bash
-   ./scripts/verificar-sitio.sh
-   ```
-   **Tenés que ver:** `TODO OK`. En la PC es normal un `AVISO` sobre la redirección http→https.
-
-### 1.7 Commit y push a `main`
-
-```bash
-git add -A
-git update-index --chmod=+x scripts/*.sh   # que los scripts sean ejecutables en Linux (Windows no lo registra)
-git status                       # confirmá que NO aparezca .env ni backups/
-git commit -m "Infra de producción: Caddy, nginx endurecido, Node 22, lockfiles, scripts Linux"
-git checkout main
-git merge despliegue-donweb
-git push origin main
-```
-
-**Tenés que ver:** el push sin errores y los cambios en GitHub (`Tatobregon/GridEbano`). El server
-va a clonar de ahí.
+**Tenés que ver:** el push sin errores y los cambios en https://github.com/Tatobregon/GridEbano
 
 ---
 
@@ -555,6 +508,77 @@ Cada backup exitoso avisa ahí. Si una noche no llega el aviso, te llega un mail
 - [ ] Borrar los usuarios de prueba cuando ya no hagan falta: `./scripts/borrar-usuario.sh prueba1`.
 
 ---
+
+## Recuperar el comunicador de un usuario
+
+Esto es para cuando un usuario (o el terapista) borra o arruina tableros y hay que volver atrás
+**solo a esa persona**. NO se usa `restore.sh`: eso vuelve atrás el servidor entero.
+
+### Cómo se hace
+
+1. Entrá a `https://<tu dominio>/crear-usuario-ebano-soluciones` con la clave de admin.
+2. Solapa **Recuperar comunicador**.
+3. Elegí el usuario y escribí **su** contraseña (la que tenés anotada en el gestor).
+4. **Leer comunicador**. Te muestra cuántos tableros encontró y cómo se llaman, para que confirmes
+   que es lo que esperabas antes de bajar nada.
+5. **Descargar archivo .grd**.
+6. En la app, entrando con ese usuario: **Gestionar tableros** → botón de los tres puntos →
+   **Restaurar copia de seguridad** → elegí el archivo. Te avisa que reemplaza la configuración
+   actual; aceptás y queda como en el archivo.
+
+> Si solo querés recuperar **un** tablero sin tirar abajo lo demás, usá **Importar tablero/s** en vez
+> de "Restaurar copia de seguridad": agrega los tableros del archivo al lado de los que ya hay
+> (renombrados para no chocar) y de ahí te quedás con el que te interesa.
+
+Al importar, la app le asigna ids nuevos a los tableros, así que los otros dispositivos del usuario
+bajan la configuración restaurada limpia, sin conflictos de sincronización.
+
+### Qué hace por detrás (y por qué hace falta la contraseña)
+
+Los datos de cada usuario están guardados **cifrados**, con una clave derivada de su contraseña:
+
+```
+clave = sha256( usuario + sha256("STATIC_USER_PW_SALT" + contraseña) )
+```
+
+El servidor guarda solo un hash para validar el login, así que **no puede descifrar nada solo**. El
+panel manda los bloques cifrados al navegador y el descifrado pasa ahí, con la contraseña que
+escribís: nunca viaja al servidor, no queda en ningún log, y el `.grd` descifrado no existe nunca en
+el disco del server.
+
+Consecuencia práctica: **sin la contraseña del usuario anotada, sus datos no se pueden recuperar.**
+Por eso la política de "admin custodia" (`docs/politica-contrasenas.md`) no es opcional.
+
+El `.grd` que baja **no está cifrado**: guardalo donde guardás las contraseñas.
+
+### Rutina preventiva recomendada
+
+Cuando termines de configurarle los tableros a un usuario nuevo (o después de un cambio grande con
+el terapista), bajate su `.grd` y guardalo. Es el respaldo más barato y el que menos depende de todo
+lo demás: se restaura solo, desde la app, sin tocar el servidor.
+
+### Limitación de hoy (Etapa 1)
+
+El panel recupera el **estado actual** del servidor. Todavía no puede traer "el estado de hace 8
+días": eso es la Etapa 2 (volcados por usuario en el backup nocturno + selector de fecha). Mientras
+tanto, el historial sigue estando en los `.tgz` de `backups/` y se recupera con `restore.sh`, que
+afecta a todos los usuarios.
+
+### Si algo no anda
+
+| Síntoma | Causa | Qué hacer |
+|---|---|---|
+| "la contraseña no coincide" | contraseña equivocada, o es la de otro usuario | probá la anotada en el gestor; el usuario también importa (es parte de la clave) |
+| "No pude cargar la librería de cifrado" | no cargó `/app/lib/sjcl.min.js` | recargá la página; si sigue, revisá que el frontend esté levantado |
+| la lista de usuarios sale vacía | couch-auth no pudo leer `auth-users` | `docker compose logs --tail 50 couch-auth` |
+| 503 al apretar botones | rate limit del panel | esperá un minuto (son 20 pedidos por minuto) |
+
+Para probar que el circuito sigue sano después de tocar la página o actualizar el upstream:
+
+```bash
+node scripts/test-recuperar-comunicador.js
+node scripts/test-endpoints-admin.js
+```
 
 ## Operación diaria (referencia rápida)
 
