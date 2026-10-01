@@ -60,6 +60,13 @@ services:
       # El público no lo tiene → no puede registrarse. El admin lo usa vía scripts/crear-usuario.sh.
       REGISTER_SECRET: ${REGISTER_SECRET}   # definido en .env (no versionado)
       ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD}   # clave de acceso a la página de admin (en .env)
+      HISTORIAL_DIR: /historial                 # puntos de recuperación por usuario (ver volumes)
+    volumes:
+      # Historial de volcados por usuario, que el panel de admin ofrece como "puntos de
+      # recuperación". Lo ESCRIBE scripts/dump-usuarios.sh desde un contenedor descartable; acá va
+      # :ro a propósito, porque este es el servicio que mira a internet y no tiene por qué poder
+      # modificar ni borrar backups.
+      - ./backups/historial:/historial:ro
     ports:
       - "127.0.0.1:3000:3000"   # solo local (crear-usuario.sh); al público llega vía nginx
     depends_on:

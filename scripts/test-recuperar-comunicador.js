@@ -65,7 +65,7 @@ function cargarLogicaDeLaPagina(sjcl) {
     const bloque = html.slice(desde, hasta);
     if (!bloque.includes('function armarGrd')) throw new Error('el bloque extraído no tiene las funciones esperadas');
     const fabrica = new Function('sjcl', 'setTimeout', bloque +
-        '\nreturn { clavesCandidatas, descifrarUno, descifrarTodo, armarGrd, etiqueta, nombreArchivo };');
+        '\nreturn { clavesCandidatas, descifrarUno, descifrarTodo, armarGrd, etiqueta, nombreArchivo, textoPunto };');
     return fabrica(sjcl, setTimeout);
 }
 
@@ -146,6 +146,15 @@ function cifrarComoLaApp(sjcl, objeto, sal, contrasena) {
     ok(L.etiqueta(null) === '(sin nombre)', 'un tablero sin nombre no rompe nada');
     const nombre = L.nombreArchivo('juanperez', new Date(2026, 9, 1, 9, 5));
     ok(nombre === 'juanperez_2026-10-01_0905_comunicador.grd', 'el nombre del archivo queda ' + nombre);
+
+    console.log('\n[7] Recuperar una fecha del historial');
+    const nombrePunto = L.nombreArchivo('juanperez', new Date(2026, 9, 1, 9, 5), '2026-09-24_0030');
+    ok(nombrePunto === 'juanperez_2026-09-24_0030_comunicador.grd',
+        'el archivo lleva la fecha DEL PUNTO, no la de hoy: ' + nombrePunto);
+    ok(L.textoPunto('2026-09-24_0030') === '24/09/2026 a las 00:30',
+        'la fecha se muestra legible: ' + L.textoPunto('2026-09-24_0030'));
+    ok(L.textoPunto('') === 'estado actual', 'sin punto dice "estado actual"');
+    ok(L.textoPunto('cualquier-cosa') === 'estado actual', 'una fecha rara no rompe la pantalla');
 
     console.log('\n' + (fallos === 0 ? 'TODO OK (' : fallos + ' FALLA(S) de ') + 'los chequeos del circuito de recuperación');
     process.exit(fallos === 0 ? 0 : 1);

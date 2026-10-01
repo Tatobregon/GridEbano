@@ -10,6 +10,9 @@ source "$(dirname "$0")/lib.sh"
 
 [ -f "$PROJECT_DIR/.env" ] || { echo "ERROR: falta el archivo .env (cp .env.example .env y completalo)."; exit 1; }
 URL="$(env_var AUTH_BASE_URL)"
+# Carpeta del historial de recuperación: couch-auth la monta (solo lectura) y el compose falla si
+# no existe. Está en .gitignore, así que en un clon nuevo no viene.
+mkdir -p "$BACKUP_DIR/historial"
 
 echo "==============================================="
 echo " Arrancando AsTeRICS Grid (EBANO)"
@@ -49,16 +52,21 @@ compose restart frontend >/dev/null
 echo "      Bases y vista OK; couch-auth y frontend reiniciados."
 
 echo "[5/6] Acceso público..."
+TAILSCALE=""
 if es_windows; then
-  TAILSCALE="/c/Program Files/Tailscale/tailscale.exe"
-  if [ -x "$TAILSCALE" ] && "$TAILSCALE" funnel status 2>/dev/null | grep -q "9095"; then
-    echo "      Funnel ya estaba activo."
-  elif [ -x "$TAILSCALE" ]; then
-    "$TAILSCALE" funnel --bg --https=443 9095 >/dev/null 2>&1 \
-      && echo "      Funnel configurado." \
-      || echo "      AVISO: no pude configurar el Funnel (¿Tailscale logueado y Funnel habilitado en el admin?)."
+  for t in "/c/Program Files/Tailscale/tailscale.exe" "/c/Program Files (x86)/Tailscale/tailscale.exe" "$(command -v tailscale 2>/dev/null)"; do
+    [ -n "$t" ] && [ -x "$t" ] && TAILSCALE="$t" && break
+  done
+  if [ -n "$TAILSCALE" ]; then
+    if "$TAILSCALE" funnel status 2>/dev/null | grep -q "9095"; then
+      echo "      Funnel ya estaba activo."
+    else
+      "$TAILSCALE" funnel --bg --https=443 9095 >/dev/null 2>&1 \
+        && echo "      Funnel configurado." \
+        || echo "      AVISO: no pude configurar el Funnel (¿Tailscale logueado y Funnel habilitado en el admin?)."
+    fi
   else
-    echo "      (Tailscale no instalado: solo acceso local en http://localhost:9095)"
+    echo "      Tailscale no encontrado en esta PC: la app queda accesible solo en http://localhost:9095"
   fi
 else
   if compose ps --services --status running 2>/dev/null | grep -qx caddy; then
@@ -69,7 +77,13 @@ else
 fi
 
 echo "[6/6] Verificación..."
-LOCAL=$(curl -s -o /dev/null -m 10 -w "%{http_code}" "http://127.0.0.1:9095/" 2>/dev/null || true)
+# El chequeo local se reintenta: después de un restart, nginx y el reenvío de puertos tardan un toque.
+LOCAL=000
+for _ in $(seq 1 10); do
+  LOCAL=$(curl -s -o /dev/null -m 10 -w "%{http_code}" "http://127.0.0.1:9095/" 2>/dev/null || true); [ -z "$LOCAL" ] && LOCAL=000
+  [ "$LOCAL" = "200" ] && break
+  sleep 3
+done
 WEB=000; DB=000
 # Se reintenta ~1 min: la primera vez Caddy puede estar sacando el certificado.
 # (curl puede salir con exit != 0 al pegarle a la propia URL pública aunque el HTTP code sea 200;
@@ -84,14 +98,28 @@ echo "      Local  (http://127.0.0.1:9095/) -> HTTP $LOCAL"
 echo "      Web    ($URL/)         -> HTTP $WEB"
 echo "      Sync   ($URL/couchdb/) -> HTTP $DB"
 echo ""
+
+if [ "$LOCAL" != "200" ]; then
+  echo "  EL STACK NO RESPONDE ni en local. Mirá qué pasó:"
+  echo "     docker compose ps"
+  echo "     docker compose logs --tail 40 frontend"
+  exit 1
+fi
+
 if [ "$WEB" = "200" ] && [ "$DB" = "200" ]; then
   echo "  TODO ARRIBA. Entrá desde cualquier dispositivo a:"
   echo "     $URL"
   echo ""
   echo "  Chequeo completo:  ./scripts/verificar-sitio.sh"
+elif es_windows; then
+  echo "  EL STACK ANDA en http://localhost:9095 , pero la URL pública no responde."
+  echo "  En esta PC eso pasa si Tailscale no está instalado o el Funnel está apagado."
+  echo "  OJO: la app usa $URL para el login, así que para probar login y sync"
+  echo "  desde ESTA PC hay que poner AUTH_BASE_URL=http://localhost:9095 en el .env y rebuildear:"
+  echo "     docker compose up -d --build frontend && ./scripts/arrancar.sh"
 else
-  echo "  ALGO NO RESPONDIÓ. Revisá: docker compose ps  y  docs/checklist-operacion.md"
-  [ "$LOCAL" = "200" ] && echo "  (Localmente anda: el problema está en el acceso público: DNS, Caddy/certificado o Funnel.)"
+  echo "  EL STACK ANDA adentro, pero la URL pública no responde (DNS, Caddy o firewall)."
+  echo "     docker compose logs --tail 50 caddy"
   exit 1
 fi
 echo "==============================================="

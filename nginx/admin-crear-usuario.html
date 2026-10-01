@@ -86,6 +86,9 @@
       <div id="panelRecuperar" class="panel">
         <label for="recUsuario">Usuario</label>
         <select id="recUsuario"><option value="">(cargando…)</option></select>
+        <label for="recPunto">Momento a recuperar</label>
+        <select id="recPunto"><option value="">Ahora (estado actual)</option></select>
+        <div class="hint" id="hintPunto">elegí primero un usuario para ver sus fechas</div>
         <label for="recClave">Contraseña de ese usuario</label>
         <input id="recClave" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
         <div class="hint">la que tenés anotada · sin ella los datos no se pueden abrir</div>
@@ -97,7 +100,9 @@
           Para restaurarlo: entrá a la app con ese usuario, andá a <b>Gestionar tableros</b> → botón de
           los tres puntos → <b>Restaurar copia de seguridad</b> y elegí este archivo. Reemplaza la
           configuración actual por la del archivo.<br>
-          El <b>.grd</b> sale sin cifrar, así que guardalo donde guardás las contraseñas.
+          El <b>.grd</b> sale sin cifrar, así que guardalo donde guardás las contraseñas.<br>
+          Las fechas de la lista son los volcados que deja el backup nocturno, y solo aparece una
+          fecha cuando ese usuario realmente cambió algo.
         </div>
       </div>
     </div>
@@ -269,11 +274,21 @@
     return label.es || label['es-AR'] || label.en || vals[0] || '(sin nombre)';
   }
 
-  function nombreArchivo(usuario, fecha) {
+  // Si se recuperó un punto del historial, el archivo lleva LA FECHA DE ESE PUNTO, no la de hoy:
+  // si no, dos rescates distintos del mismo usuario terminarían con nombres indistinguibles.
+  function nombreArchivo(usuario, fecha, punto) {
+    if (punto) return usuario + '_' + punto + '_comunicador.grd';
     const d = fecha || new Date();
     const p = (n) => (n < 10 ? '0' : '') + n;
     return usuario + '_' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
          + '_' + p(d.getHours()) + p(d.getMinutes()) + '_comunicador.grd';
+  }
+
+  // "2026-09-24_0030" -> "24/09/2026 a las 00:30"
+  function textoPunto(punto) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})$/.exec(punto || '');
+    if (!m) return 'estado actual';
+    return m[3] + '/' + m[2] + '/' + m[1] + ' a las ' + m[4] + ':' + m[5];
   }
 
 /* ╔══════════════════════════════════════════════════════════════════════════╗
@@ -314,11 +329,47 @@
     $("btnDescargar").style.display = "none";
     const r = $("resumen"); r.className = "resumen"; r.textContent = "";
   }
-  $("recUsuario").addEventListener("change", () => { limpiarResultado(); hide($("msgRec")); });
+
+  // Fechas disponibles para ese usuario (las deja el volcado nocturno). Siempre se ofrece además el
+  // estado actual, que no depende del historial.
+  async function cargarPuntos(usuario) {
+    const sel = $("recPunto");
+    sel.innerHTML = '<option value="">Ahora (estado actual)</option>';
+    if (!usuario) { $("hintPunto").textContent = "elegí primero un usuario para ver sus fechas"; return; }
+    $("hintPunto").textContent = "buscando fechas guardadas…";
+    try {
+      const r = await fetch("/admin/puntos-recuperacion", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessPassword, usuario })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) throw new Error(data.error || "error");
+      const puntos = data.puntos || [];
+      puntos.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.punto;
+        o.textContent = textoPunto(p.punto) + "  ·  " + p.tableros + " tableros · "
+                      + (p.bytes / 1048576).toFixed(1) + " MB";
+        sel.appendChild(o);
+      });
+      $("hintPunto").textContent = puntos.length
+        ? puntos.length + " fecha(s) guardada(s) · solo se guarda una fecha cuando el usuario cambió algo"
+        : "todavía no hay fechas guardadas de este usuario (el volcado corre de noche)";
+    } catch (e) {
+      $("hintPunto").textContent = "no pude leer el historial; queda disponible el estado actual";
+    }
+  }
+
+  $("recUsuario").addEventListener("change", () => {
+    limpiarResultado(); hide($("msgRec"));
+    cargarPuntos($("recUsuario").value);
+  });
+  $("recPunto").addEventListener("change", () => { limpiarResultado(); hide($("msgRec")); });
   $("recClave").addEventListener("input", limpiarResultado);
 
   $("btnLeer").addEventListener("click", async () => {
     const usuario = $("recUsuario").value;
+    const punto = $("recPunto").value;
     const clave = $("recClave").value.trim();
     limpiarResultado();
     if (!usuario) { show($("msgRec"), "Elegí un usuario."); return; }
@@ -332,7 +383,7 @@
     try {
       const r = await fetch("/admin/datos-usuario", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessPassword, usuario })
+        body: JSON.stringify({ accessPassword, usuario, punto })
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || !data.ok) {
@@ -342,7 +393,9 @@
       }
       const documentos = data.documentos || [];
       if (!documentos.length) {
-        show($("msgRec"), "Ese usuario todavía no tiene tableros guardados en el servidor.", "info");
+        show($("msgRec"), punto
+          ? "Ese punto de recuperación no tiene tableros adentro."
+          : "Ese usuario todavía no tiene tableros guardados en el servidor.", "info");
         $("btnLeer").disabled = false;
         return;
       }
@@ -357,13 +410,14 @@
       }
       const grd = armarGrd(res.objetos);
       const texto = JSON.stringify(grd);
-      grdListo = { nombre: nombreArchivo(usuario), texto: texto };
+      grdListo = { nombre: nombreArchivo(usuario, null, punto), texto: texto };
 
       // Resumen para que confirmes ANTES de descargar
       const caja = $("resumen");
       caja.textContent = "";
       const linea = (html) => { const p = document.createElement("div"); p.innerHTML = html; caja.appendChild(p); };
       const mb = (texto.length / 1048576).toFixed(1);
+      linea("Estado: <b>" + (punto ? textoPunto(punto) : "actual") + "</b>");
       linea("<b>" + grd.grids.length + "</b> tableros"
           + (grd.dictionaries ? " · <b>" + grd.dictionaries.length + "</b> diccionarios" : "")
           + (grd.metadata ? " · con la configuración del usuario" : "")

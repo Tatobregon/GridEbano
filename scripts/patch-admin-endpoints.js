@@ -5,6 +5,8 @@
 //                                real NUNCA llega al navegador; el browser solo manda la clave de acceso.
 //   POST /admin/listar-usuarios -> nombres de los usuarios existentes (para el desplegable del panel).
 //   POST /admin/datos-usuario   -> documentos de un usuario TAL CUAL están guardados: CIFRADOS.
+//                                  Con "punto" lee un volcado viejo del historial en vez de la base viva.
+//   POST /admin/puntos-recuperacion -> fechas disponibles para un usuario (las deja dump-usuarios.sh).
 //
 // POR QUÉ /admin/datos-usuario NO DESCIFRA NADA: los datos del usuario están cifrados con una clave
 // derivada de SU contraseña (ver nota de abajo). El servidor no la tiene y no la quiere: manda los
@@ -29,7 +31,7 @@ if (!s.includes(anchor)) {
     console.error('patch-admin-endpoints: ANCHOR no encontrado en start.js. Abortando build.');
     process.exit(1);
 }
-if (s.includes('/admin/crear-usuario') && s.includes('/admin/datos-usuario')) {
+if (s.includes('/admin/crear-usuario') && s.includes('/admin/puntos-recuperacion')) {
     console.log('patch-admin-endpoints: ya aplicado, salteando.');
     process.exit(0);
 }
@@ -77,6 +79,31 @@ const _couchGet = (path) => fetch(config.dbServer.protocol + config.dbServer.hos
 // Modelos necesarios para armar un .grd: los mismos que exporta la app en "Guardar copia de
 // seguridad" (ver dataService.getBackupData del upstream: grids + metadata + dictionaries).
 const _MODELOS_GRD = ['GridData', 'MetaData', 'Dictionary'];
+// Historial de volcados por usuario (lo escribe scripts/dump-usuarios.sh; acá está montado :ro).
+const _fs = require('fs');
+const _zlib = require('zlib');
+const _HISTORIAL = process.env.HISTORIAL_DIR || '/historial';
+// Un "punto" es el sello de tiempo del volcado. Se valida con esta forma exacta ANTES de usarlo en
+// una ruta de archivo: así no se puede pedir ../../ ni nada parecido.
+const _PUNTO_OK = /^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}$/;
+
+function _leerPuntos(usuario) {
+    const dir = _HISTORIAL + '/' + usuario;
+    let archivos = [];
+    try { archivos = _fs.readdirSync(dir); } catch (e) { return []; }
+    return archivos
+        .filter((f) => f.endsWith('.meta.json') && _PUNTO_OK.test(f.replace('.meta.json', '')))
+        .map((f) => {
+            const punto = f.replace('.meta.json', '');
+            if (!_fs.existsSync(dir + '/' + punto + '.json.gz')) return null;   // meta huérfano
+            try {
+                const m = JSON.parse(_fs.readFileSync(dir + '/' + f, 'utf8'));
+                return { punto: punto, tableros: m.tableros || 0, documentos: m.documentos || 0, bytes: m.bytes || 0 };
+            } catch (e) { return null; }
+        })
+        .filter((p) => !!p)
+        .sort((a, b) => (a.punto < b.punto ? 1 : -1));
+}
 
 // Usuarios con su base personal. El nombre de la base NUNCA se arma con texto que venga del
 // navegador: se lee del registro del usuario en auth-users (evita que alguien pida una base ajena).
@@ -107,11 +134,43 @@ app.post('/admin/listar-usuarios', async (req, res) => {
     }
 });
 
+app.post('/admin/puntos-recuperacion', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!_adminOk(req)) return res.status(403).json({ error: 'Clave de acceso incorrecta' });
+    const pedido = String((req.body || {}).usuario || '').trim().toLowerCase();
+    if (!USERNAME_REGEX.test(pedido)) return res.status(400).json({ error: 'Nombre de usuario inválido' });
+    try {
+        return res.json({ ok: true, puntos: _leerPuntos(pedido) });
+    } catch (e) {
+        console.error('admin/puntos-recuperacion:', e.message);
+        return res.status(500).json({ error: 'No pude leer el historial' });
+    }
+});
+
 app.post('/admin/datos-usuario', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!_adminOk(req)) return res.status(403).json({ error: 'Clave de acceso incorrecta' });
     const pedido = String((req.body || {}).usuario || '').trim().toLowerCase();
     if (!USERNAME_REGEX.test(pedido)) return res.status(400).json({ error: 'Nombre de usuario inválido' });
+    const punto = String((req.body || {}).punto || '').trim();
+    // Camino "estado de una fecha": sale de un archivo del historial, no de la base viva. No hace
+    // falta que el usuario siga existiendo (se puede rescatar a uno borrado por error).
+    if (punto) {
+        if (!_PUNTO_OK.test(punto)) return res.status(400).json({ error: 'Punto de recuperación inválido' });
+        const archivo = _HISTORIAL + '/' + pedido + '/' + punto + '.json.gz';
+        try {
+            if (!_fs.existsSync(archivo)) return res.status(404).json({ error: 'No existe ese punto de recuperación' });
+            const dump = JSON.parse(_zlib.gunzipSync(_fs.readFileSync(archivo)).toString('utf8'));
+            const documentos = (dump.documentos || []).filter((d) => d && _MODELOS_GRD.indexOf(d.modelName) !== -1 && d.encryptedDataBase64);
+            return res.json({
+                ok: true, usuario: dump.usuario || pedido, punto: punto,
+                documentos: documentos, totalEnBase: (dump.documentos || []).length
+            });
+        } catch (e) {
+            console.error('admin/datos-usuario (historial):', e.message);
+            return res.status(500).json({ error: 'No pude leer ese punto de recuperación' });
+        }
+    }
     try {
         const encontrado = (await _listarUsuarios()).filter((u) => u.usuario.toLowerCase() === pedido)[0];
         if (!encontrado) return res.status(404).json({ error: 'Ese usuario no existe' });
@@ -144,4 +203,4 @@ app.post('/admin/datos-usuario', async (req, res) => {
 
 s = s.replace(anchor, anchor + '\n' + block);
 fs.writeFileSync(file, s);
-console.log('patch-admin-endpoints: endpoints /admin/verificar, /admin/crear-usuario, /admin/listar-usuarios y /admin/datos-usuario inyectados OK.');
+console.log('patch-admin-endpoints: endpoints /admin/verificar, /admin/crear-usuario, /admin/listar-usuarios, /admin/datos-usuario y /admin/puntos-recuperacion inyectados OK.');

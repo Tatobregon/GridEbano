@@ -41,7 +41,7 @@ Servicios en `docker-compose.yml` (proyecto con `name: asterics-grid` fijo):
 - **couchdb** (couchdb:3.4) — una base por usuario (`asterics-grid-data$<hash>`), volumen
   `asterics-grid_couchdb-data`. Puerto solo en 127.0.0.1:5984.
 - **couch-auth** (node:22, `superlogin/start.js` del upstream + patches) — login, crea las bases de
-  usuario. 127.0.0.1:3000.
+  usuario, endpoints del panel de admin. Monta `./backups/historial:/historial:ro`. 127.0.0.1:3000.
 - **frontend** (nginx:stable-alpine) — app + reverse proxy. 127.0.0.1:9095.
 - **caddy** (caddy:2, **perfil `prod`**) — HTTPS automático. Solo arranca con `COMPOSE_PROFILES=prod`
   en el `.env` (el server). Puertos públicos 80/443.
@@ -71,9 +71,12 @@ y en prod `COMPOSE_PROFILES=prod`, `SITE_DOMAIN`, `ACME_EMAIL`, `RCLONE_DESTINO`
    contraseña del usuario: esa contraseña nunca llega al servidor. El `.grd` se restaura con la
    función propia de la app ("Gestionar tableros → Restaurar copia de seguridad"), que reemplaza la
    configuración y le pone ids nuevos a los tableros, así no hay conflictos de sync.
-   **Etapa 1 (hecha):** el estado actual. **Etapa 2 (pendiente):** puntos de recuperación por fecha,
-   con volcados lógicos por usuario en el backup nocturno (solo de los usuarios que cambiaron) +
-   selector de fecha en el panel. Ver `docs/runbook-prod.md`, "Recuperar el comunicador de un usuario".
+   Se puede recuperar el **estado actual** o el de una **fecha anterior**. Las fechas salen de
+   `scripts/dump-usuarios.sh` (cron 00:45): vuelca los documentos cifrados de cada usuario a
+   `backups/historial/<usuario>/<fecha>.json.gz`, **solo de los usuarios que cambiaron** (compara
+   `update_seq` contra el volcado anterior más cercano). Retención 30 días contados desde el volcado
+   más nuevo de cada usuario, y **nunca se borra el último**. couch-auth monta esa carpeta `:ro`;
+   quien escribe es un contenedor descartable. Ver `docs/runbook-prod.md`.
 
 ## Modificaciones al upstream (todas en tiempo de build, sin fork)
 
@@ -99,7 +102,9 @@ los patches `.js` abortan si no encuentran su ancla):
   (`sha256('STATIC_USER_PW_SALT' + clave)`), si no el login nunca matchea.
 - `/admin/listar-usuarios` — nombres existentes (para el desplegable del panel).
 - `/admin/datos-usuario` — documentos de un usuario **tal cual, cifrados** (GridData/MetaData/
-  Dictionary). No descifra nada y no recibe la contraseña del usuario.
+  Dictionary). No descifra nada y no recibe la contraseña del usuario. Con `punto` los lee de un
+  volcado del historial en vez de la base viva.
+- `/admin/puntos-recuperacion` — fechas disponibles de un usuario (lee los `.meta.json`).
 Runtime en `node:22-bookworm-slim`, usuario `node`.
 
 ## Trampas conocidas (ya resueltas; no reintroducir)
@@ -130,6 +135,15 @@ Runtime en `node:22-bookworm-slim`, usuario `node`.
   20r/m con burst 10. Con 6r/m el propio admin se trababa.
 - **`/admin/datos-usuario` puede devolver varios MB** (imágenes de tableros en base64): la location
   `/admin/` necesita `proxy_read_timeout 300s`.
+- **El "punto" (fecha) se valida con `^\d{4}-\d{2}-\d{2}_\d{4}$` ANTES de tocar el disco.** Es lo
+  único que impide pedir un archivo fuera de `backups/historial/`.
+- **`backups/historial/` tiene que existir** antes de levantar el stack (couch-auth la monta). Está
+  en `.gitignore`, así que un clon nuevo no la trae: la crea `arrancar.sh`.
+- **El volcado nocturno corre a las 00:45, después del backup**: `backup.sh --consistente` para
+  CouchDB ~10 s y si coincidieran, el volcado fallaría.
+- **El CouchDB temporal de `historial-desde-tgz.sh` usa la MISMA imagen que producción** (couchdb:3.4)
+  porque el nombre de nodo tiene que coincidir con el de los datos del backup; si no, las bases no
+  se montan. El script lo detecta (chequea que aparezca `auth-users`) y saltea ese backup.
 
 ## Archivos
 
@@ -148,8 +162,11 @@ scripts/preparar-server.sh    prepara un Ubuntu 24.04 nuevo (Docker, firewall, f
 scripts/verificar-sitio.sh    chequeo desde afuera: lo necesario anda, lo sensible da 404
 scripts/crear-usuario.sh / borrar-usuario.sh
 scripts/backup.sh / backup-offsite.sh / restore.sh / parchear.sh
+scripts/dump-usuarios.sh + .js     volcado nocturno por usuario (puntos de recuperación)
+scripts/historial-desde-tgz.sh     rellena el historial a partir de los .tgz ya existentes
 scripts/test-recuperar-comunicador.js   prueba el descifrado y el armado del .grd (sin stack)
 scripts/test-endpoints-admin.js         prueba los endpoints de admin contra un CouchDB simulado
+scripts/test-dump-usuarios.js           prueba el volcado: cambios, retención, nada descifrado
 docs/runbook-prod.md      despliegue y operación en DonWeb (paso a paso)
 docs/checklist-operacion.md   rescate en la PC local
 avances/                  estado del proyecto, auditorías y revisiones

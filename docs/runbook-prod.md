@@ -421,6 +421,12 @@ Agregá al final esta línea (todas las noches a las 00:30, hora de Córdoba):
 ```
 30 0 * * * cd /opt/asterics-grid && ./scripts/backup.sh --consistente >> /opt/asterics-grid/backups/backup.log 2>&1
 ```
+Y esta segunda línea, que guarda los puntos de recuperación por usuario (15 minutos después, para
+que no se pise con el backup, que frena CouchDB unos segundos):
+```
+45 0 * * * cd /opt/asterics-grid && ./scripts/dump-usuarios.sh >> /opt/asterics-grid/backups/backup.log 2>&1
+```
+
 Guardá (`Ctrl+O`, `Enter`) y salí (`Ctrl+X`).
 
 **Por qué a esa hora:** DonWeb corre sus copias "durante la madrugada", así que conviene que el
@@ -518,11 +524,15 @@ Esto es para cuando un usuario (o el terapista) borra o arruina tableros y hay q
 
 1. Entrá a `https://<tu dominio>/crear-usuario-ebano-soluciones` con la clave de admin.
 2. Solapa **Recuperar comunicador**.
-3. Elegí el usuario y escribí **su** contraseña (la que tenés anotada en el gestor).
-4. **Leer comunicador**. Te muestra cuántos tableros encontró y cómo se llaman, para que confirmes
-   que es lo que esperabas antes de bajar nada.
-5. **Descargar archivo .grd**.
-6. En la app, entrando con ese usuario: **Gestionar tableros** → botón de los tres puntos →
+3. Elegí el usuario.
+4. Elegí el **momento**: *Ahora (estado actual)*, o una de las fechas guardadas. Cada fecha te
+   muestra cuántos tableros tenía y cuánto pesa, así ya desde la lista te das una idea.
+5. Escribí **su** contraseña (la que tenés anotada en el gestor).
+6. **Leer comunicador**. Te muestra de qué momento salió, cuántos tableros encontró y cómo se
+   llaman, para que confirmes que es lo que esperabas antes de bajar nada. Si no es el momento que
+   buscabas, cambiás la fecha y volvés a leer.
+7. **Descargar archivo .grd**. El archivo lleva la fecha del momento recuperado en el nombre.
+8. En la app, entrando con ese usuario: **Gestionar tableros** → botón de los tres puntos →
    **Restaurar copia de seguridad** → elegí el archivo. Te avisa que reemplaza la configuración
    actual; aceptás y queda como en el archivo.
 
@@ -557,12 +567,41 @@ Cuando termines de configurarle los tableros a un usuario nuevo (o después de u
 el terapista), bajate su `.grd` y guardalo. Es el respaldo más barato y el que menos depende de todo
 lo demás: se restaura solo, desde la app, sin tocar el servidor.
 
-### Limitación de hoy (Etapa 1)
+### De dónde salen las fechas
 
-El panel recupera el **estado actual** del servidor. Todavía no puede traer "el estado de hace 8
-días": eso es la Etapa 2 (volcados por usuario en el backup nocturno + selector de fecha). Mientras
-tanto, el historial sigue estando en los `.tgz` de `backups/` y se recupera con `restore.sh`, que
-afecta a todos los usuarios.
+Todas las noches a las 00:45, después del backup, `scripts/dump-usuarios.sh` guarda los documentos
+(cifrados) de cada usuario en `backups/historial/<usuario>/<fecha>.json.gz`.
+
+La parte importante: **solo guarda a los usuarios que cambiaron algo**. Un comunicador configurado
+no se toca durante semanas, así que en régimen normal esto ocupa casi nada. Si volcáramos a todos
+todas las noches, con 100 usuarios serían como 1 GB por noche y el disco no aguantaría.
+
+Efecto práctico que conviene entender: **en la lista no vas a ver una fecha por día, sino una fecha
+por cada vez que ese usuario realmente cambió algo**. Eso es lo que querés — cada fecha de la lista
+es un estado distinto de verdad, no catorce copias iguales.
+
+Se conservan **30 días** de historial, contados desde el volcado más nuevo de cada usuario, y
+**nunca se borra el último**: alguien que no toca su comunicador en seis meses sigue teniendo su
+punto de recuperación.
+
+Esto convive con los `.tgz` de `backups/`, que siguen siendo la red para desastres (se rompió la
+base, se murió el disco) y se usan con `restore.sh`, que afecta a todos los usuarios.
+
+### Revisar que el volcado esté corriendo
+
+```bash
+cd /opt/asterics-grid
+./scripts/dump-usuarios.sh          # se puede correr a mano cuando quieras
+du -sh backups/historial            # cuánto ocupa el historial
+ls -l backups/historial/*/          # qué fechas hay por usuario
+```
+
+Correrlo a mano es seguro: si nadie cambió nada, no escribe nada. Para forzarlo (por ejemplo justo
+después de configurar a un usuario nuevo y antes de que pase la noche):
+
+```bash
+./scripts/dump-usuarios.sh --forzar --usuario juanperez
+```
 
 ### Si algo no anda
 
@@ -572,12 +611,15 @@ afecta a todos los usuarios.
 | "No pude cargar la librería de cifrado" | no cargó `/app/lib/sjcl.min.js` | recargá la página; si sigue, revisá que el frontend esté levantado |
 | la lista de usuarios sale vacía | couch-auth no pudo leer `auth-users` | `docker compose logs --tail 50 couch-auth` |
 | 503 al apretar botones | rate limit del panel | esperá un minuto (son 20 pedidos por minuto) |
+| "todavía no hay fechas guardadas" | ese usuario nunca cambió desde que existe el historial, o el volcado no corrió | `./scripts/dump-usuarios.sh --forzar --usuario <nombre>` |
+| "no pude leer el historial" | falta la carpeta o el montaje | `./scripts/arrancar.sh` (crea `backups/historial`) y `docker compose up -d couch-auth` |
 
 Para probar que el circuito sigue sano después de tocar la página o actualizar el upstream:
 
 ```bash
 node scripts/test-recuperar-comunicador.js
 node scripts/test-endpoints-admin.js
+node scripts/test-dump-usuarios.js
 ```
 
 ## Operación diaria (referencia rápida)
