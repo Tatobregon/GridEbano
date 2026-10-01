@@ -1,7 +1,8 @@
 // Patch de build (frontend): re-marca la app con el logo de EBANO, manteniendo la atribución a
 // AsTeRICS Grid (autoría del software, respeta el AGPL). Reemplaza:
-//   - headerIcon.vue : logo del header (escritorio + celular) por el de EBANO; en escritorio agrega
-//                      "by AsTeRICS Grid" en chico y tenue al lado.
+//   - headerIcon.vue : logo del header (escritorio + celular) por el de EBANO, más grande y con
+//                      "powered by AsTeRICS" debajo. Tocarlo ya NO va al tablero de inicio: abre la
+//                      ventana de créditos (ver scripts/patch-creditos.js).
 //   - index.html     : <title> y favicon.
 //   - manifest       : name/short_name/description (con el eslogan) + íconos de la PWA.
 //   - loginView.vue  : prefijo "Asterics AAC -" -> "EBANO -" + eslogan "desarrollando capacidades".
@@ -22,16 +23,28 @@ function patch(file, label, find, replacement) {
 
 const HEADER = 'src/vue-components/components/headerIcon.vue';
 
-// 1) Header ESCRITORIO: logo EBANO + "by AsTeRICS Grid" chiquito.
+// Bloque del logo: EBANO grande con "powered by AsTeRICS" debajo. Al tocarlo abre la ventana de
+// créditos (window.ebanoCreditos, que define scripts/patch-creditos.js); el `|| true` deja la app
+// andando aunque ese patch no estuviera.
+// `alto` se puede tocar para agrandar o achicar el logo; el texto de abajo acompaña.
+function bloqueLogo(alto, altoTexto) {
+    return '<h1 class="inline" style="margin:0; display:inline-flex; flex-direction:column; align-items:center; gap:1px; line-height:1;">'
+         + '<img id="astericsIcon" src="app/img/ebano-logo.png" height="' + alto + '" alt="EBANO"/>'
+         + '<span style="font-size:' + altoTexto + 'px; font-weight:400; color:#6b7280; white-space:nowrap;">powered by AsTeRICS</span>'
+         + '</h1>';
+}
+const ABRIR_CREDITOS = 'onclick="window.ebanoCreditos &amp;&amp; window.ebanoCreditos(); return false;"';
+
+// 1) Header ESCRITORIO: logo EBANO grande + "powered by AsTeRICS" debajo; abre los créditos.
 patch(HEADER, 'header escritorio',
     '<a tabindex="21" aria-hidden="true" href="#main" class="hide-mobile"><h1 class="inline"><img id="astericsIcon" src="app/img/asterics-aac-logo-raw.svg" height="40" alt="Asterics AAC"/></h1></a>',
-    '<a tabindex="21" aria-hidden="true" href="#main" class="hide-mobile"><h1 class="inline" style="margin:0; display:inline-flex; align-items:flex-end; gap:7px;"><img id="astericsIcon" src="app/img/ebano-logo.png" height="40" alt="EBANO"/><span style="font-size:11px; font-weight:400; color:#6b7280; line-height:2.7; white-space:nowrap;">by AsTeRICS&nbsp;Grid</span></h1></a>'
+    '<a tabindex="21" href="javascript:void(0)" ' + ABRIR_CREDITOS + ' aria-label="Acerca de este comunicador" class="hide-mobile">' + bloqueLogo(54, 10) + '</a>'
 );
 
-// 2) Header CELULAR: logo EBANO (más chico, sin el "by" para no amontonar).
+// 2) Header CELULAR: lo mismo, un poco más chico para que no coma altura de pantalla.
 patch(HEADER, 'header celular',
     '<a tabindex="22" aria-hidden="true" href="#main" class="show-mobile"><h1 class="inline"><img id="astericsIcon" src="app/img/favicon.svg" alt="Asterics AAC" style="margin: 0"/></h1></a>',
-    '<a tabindex="22" aria-hidden="true" href="#main" class="show-mobile"><h1 class="inline"><img id="astericsIcon" src="app/img/ebano-logo.png" height="34" alt="EBANO" style="margin: 0"/></h1></a>'
+    '<a tabindex="22" href="javascript:void(0)" ' + ABRIR_CREDITOS + ' aria-label="Acerca de este comunicador" class="show-mobile">' + bloqueLogo(40, 9) + '</a>'
 );
 
 // 3) index.html: título + favicon + h1 sr-only + logo del sidebar.
@@ -41,7 +54,7 @@ patch('index.html', 'h1 sr-only (lectores de pantalla)',
     '<h1 class="sr-only">EBANO by AsTeRICS Grid</h1>');
 patch('index.html', 'logo del sidebar (escritorio)',
     '<a tabindex="-1" aria-hidden="true" href="javascript:void(0)" @click="toMain"><h1 class="inline hide-mobile"><img id="astericsIcon" src="app/img/asterics-aac-logo-raw.svg" height="40" alt="Asterics AAC"/></h1></a>',
-    '<a tabindex="-1" aria-hidden="true" href="javascript:void(0)" @click="toMain"><h1 class="inline hide-mobile" style="margin:0; display:inline-flex; align-items:flex-end; gap:7px;"><img id="astericsIcon" src="app/img/ebano-logo.png" height="40" alt="EBANO"/><span style="font-size:11px; font-weight:400; color:#6b7280; line-height:2.7; white-space:nowrap;">by AsTeRICS&nbsp;Grid</span></h1></a>');
+    '<a tabindex="-1" href="javascript:void(0)" ' + ABRIR_CREDITOS + ' aria-label="Acerca de este comunicador" class="hide-mobile">' + bloqueLogo(54, 10) + '</a>');
 patch('index.html', 'favicon svg->png',
     '<link rel="icon" href="app/img/favicon-no-circle.svg" type="image/svg+xml">',
     '<link rel="icon" href="app/img/ebano-favicon-96.png" type="image/png">');

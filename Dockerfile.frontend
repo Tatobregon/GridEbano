@@ -91,6 +91,12 @@ RUN node /tmp/patch-hover-clock.js
 COPY scripts/patch-branding.js /tmp/patch-branding.js
 RUN node /tmp/patch-branding.js
 
+# (1j2) Ventana "Acerca de este comunicador": se abre al tocar el logo. Agradece a AsTeRICS y
+# ARASAAC, muestra los tres logos y deja a mano el link al código fuente (AGPL). Va DESPUÉS del
+# branding, que es el que engancha el logo con esta ventana.
+COPY scripts/patch-creditos.js /tmp/patch-creditos.js
+RUN node /tmp/patch-creditos.js
+
 # (1k) Saca del menú de navegación "Acerca de" y "Ayuda" (los clientes no deben tocar ahí). NO borra
 # la info: las páginas #about/#help siguen existiendo por URL. Ver scripts/patch-remove-nav-about-help.js.
 COPY scripts/patch-remove-nav-about-help.js /tmp/patch-remove-nav-about-help.js
