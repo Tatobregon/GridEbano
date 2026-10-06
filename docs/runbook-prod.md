@@ -630,9 +630,10 @@ Todo [SERVER], parado en `/opt/asterics-grid`:
 |---|---|
 | Conectarse | [PC] `ssh root@TU.IP` y después `cd /opt/asterics-grid` |
 | Estado | `docker compose ps` |
-| Logs | `docker compose logs --tail 50 couch-auth` (o `couchdb`, `frontend`, `caddy`) |
+| Logs | `docker compose logs --tail 50 couch-auth` (o `couchdb`, `licencias`, `frontend`, `caddy`) |
 | Chequeo completo | `./scripts/verificar-sitio.sh` |
 | Crear usuario | Panel web, o `./scripts/crear-usuario.sh <usuario>` |
+| Licencia de Controlador Ebano | Panel web, solapa **Licencias** (ver `docs/licencias-controlador.md`) |
 | Borrar usuario | `./scripts/borrar-usuario.sh <usuario>` (irreversible) |
 | Backup ya | `./scripts/backup-offsite.sh` |
 | Restaurar | `./scripts/restore.sh backups/<archivo>.tgz` |
@@ -668,5 +669,7 @@ así los navegadores toman la versión nueva.
 | `backup.sh`: "no existe el volumen" | El stack nunca se levantó con este compose | `docker compose up -d` primero |
 | Muchos 503 en el login | Rate limit (60 por minuto por IP) | Esperar un minuto; si es un ataque, `fail2ban` y el límite lo contienen |
 | El disco se llena | Imágenes viejas de builds anteriores | `docker image prune -f` (no toca los datos) |
+| La solapa Licencias dice que falta la clave | `.env` sin `LICENCIAS_CLAVE_PRIVADA` | Agregarla y `docker compose up -d licencias` (ver `docs/licencias-controlador.md`) |
+| Controlador Ebano no puede activar ("no se pudo conectar") | Servicio `licencias` caído (el Grid sigue andando) | `docker compose ps licencias`, `docker compose logs --tail 50 licencias`, `./scripts/arrancar.sh` |
 
 **Nunca** uses `docker compose down -v`: el `-v` borra el volumen con **todos** los datos.

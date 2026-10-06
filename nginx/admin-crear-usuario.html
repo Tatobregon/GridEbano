@@ -48,6 +48,20 @@
   .resumen ul { margin: 8px 0 0; padding-left: 18px; color: #94a3b8; max-height: 190px; overflow: auto; }
   .resumen li { margin: 2px 0; }
   .nota { color: #64748b; font-size: .72rem; margin-top: 10px; line-height: 1.45; }
+  /* Licencias de Controlador Ebano */
+  .codigo { margin-top: 16px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 10px;
+            padding: 14px; text-align: center; display: none; }
+  .codigo.on { display: block; }
+  .codigo .grande { font: 700 2rem/1.2 ui-monospace, Consolas, monospace; letter-spacing: .12em;
+                    color: #e2e8f0; margin: 6px 0 2px; }
+  .codigo button { width: auto; margin-top: 10px; padding: 8px 18px; }
+  details { margin-top: 18px; font-size: .88rem; }
+  summary { cursor: pointer; color: #cbd5e1; }
+  h2 { font-size: .95rem; margin: 26px 0 8px; color: #cbd5e1; }
+  .lic { border-top: 1px solid #334155; padding: 10px 0; font-size: .86rem; }
+  .lic .gris { color: #94a3b8; font-size: .8rem; margin-top: 2px; }
+  .lic .acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .lic .acciones button { width: auto; margin: 0; padding: 6px 12px; font-size: .8rem; }
 </style>
 </head>
 <body>
@@ -63,11 +77,12 @@
       <div id="msg1" class="msg"></div>
     </div>
 
-    <!-- Paso 2: las dos herramientas -->
+    <!-- Paso 2: las herramientas -->
     <div id="step2">
       <div class="tabs">
         <button id="tabCrear" class="on">Crear usuario</button>
         <button id="tabRecuperar">Recuperar comunicador</button>
+        <button id="tabLicencias">Licencias</button>
       </div>
 
       <!-- ── Crear usuario ────────────────────────────────────────────────── -->
@@ -103,6 +118,33 @@
           El <b>.grd</b> sale sin cifrar, así que guardalo donde guardás las contraseñas.<br>
           Las fechas de la lista son los volcados que deja el backup nocturno, y solo aparece una
           fecha cuando ese usuario realmente cambió algo.
+        </div>
+      </div>
+
+      <!-- ── Licencias de Controlador Ebano (el mouse con la mirada) ───────── -->
+      <div id="panelLicencias" class="panel">
+        <div id="licAviso" class="msg"></div>
+        <label for="licPaciente">Paciente</label>
+        <input id="licPaciente" type="text" autocomplete="off" maxlength="60">
+        <label for="licNota">Nota (opcional)</label>
+        <input id="licNota" type="text" autocomplete="off" maxlength="100" placeholder="por ejemplo: PC de la casa">
+        <button id="btnLicCrear">Generar código de activación</button>
+        <div id="licCodigo" class="codigo"></div>
+        <div id="msgLic" class="msg"></div>
+        <details>
+          <summary>¿La computadora del paciente no tiene internet?</summary>
+          <label for="licEquipo">Código del equipo (lo muestra el programa en la ventana "Activar")</label>
+          <input id="licEquipo" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" placeholder="XXXX-XXXX-XXXX">
+          <button id="btnLicArchivo" class="sec">Descargar archivo de licencia</button>
+          <div class="hint">usa el paciente y la nota de arriba · el archivo se abre en el programa con "Abrir archivo de licencia…"</div>
+        </details>
+        <h2>Licencias</h2>
+        <div id="licLista" class="hint">(cargando…)</div>
+        <div class="nota">
+          Cada código sirve para <b>una sola computadora</b>. Una vez activada, la computadora funciona
+          siempre, también sin internet, y no se desactiva nunca desde acá.<br>
+          <b>Pasar a otro equipo</b> deja que el mismo código active una computadora nueva (por ejemplo,
+          si la del paciente se rompió).
         </div>
       </div>
     </div>
@@ -144,11 +186,14 @@
   const solapa = (cual) => {
     $("tabCrear").classList.toggle("on", cual === "crear");
     $("tabRecuperar").classList.toggle("on", cual === "recuperar");
+    $("tabLicencias").classList.toggle("on", cual === "licencias");
     $("panelCrear").classList.toggle("on", cual === "crear");
     $("panelRecuperar").classList.toggle("on", cual === "recuperar");
+    $("panelLicencias").classList.toggle("on", cual === "licencias");
   };
   $("tabCrear").addEventListener("click", () => solapa("crear"));
   $("tabRecuperar").addEventListener("click", () => { solapa("recuperar"); cargarUsuarios(); });
+  $("tabLicencias").addEventListener("click", () => { solapa("licencias"); cargarLicencias(); });
 
   // ── Crear usuario ───────────────────────────────────────────────────────────
   // Mismas reglas que valida el servidor (couch-auth): así el error se ve ANTES de mandar nada.
@@ -460,6 +505,192 @@
     show($("msgRec"), "✅ Descargado: " + grdListo.nombre, "ok");
   });
   $("recClave").addEventListener("keydown", e => { if (e.key === "Enter") $("btnLeer").click(); });
+
+  // ── Licencias de Controlador Ebano ──────────────────────────────────────────
+  // Lo atiende el servicio "licencias" (licencias/server.js), aparte del login del comunicador.
+  // El código de activación se escribe en la computadora del paciente: así la clave de este panel
+  // nunca se escribe ahí.
+  let licencias = null;   // la última lista leída del servidor
+  const agrupar = (c) => (String(c || "").match(/.{1,4}/g) || []).join("-");
+  const fecha = (iso) => { const d = new Date(iso); return isNaN(d) ? "?" : d.toLocaleDateString("es-AR"); };
+
+  async function licPedir(accion, datos) {
+    let r;
+    try {
+      r = await fetch("/admin/licencias/" + accion, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ accessPassword }, datos || {}))
+      });
+    } catch (e) {
+      throw new Error("No se pudo conectar con el servidor.");
+    }
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) return data;
+    if (r.status === 502 || r.status === 504) throw new Error("El servicio de licencias no responde (¿está levantado?).");
+    // nginx frena los pedidos de más con 503 sin cuerpo JSON (el servicio siempre manda "error").
+    if (r.status === 429 || (r.status === 503 && !data.error)) throw new Error("Demasiados pedidos seguidos: esperá un minuto.");
+    throw new Error(data.error || "No se pudo completar.");
+  }
+
+  async function cargarLicencias() {
+    const caja = $("licLista");
+    try {
+      const data = await licPedir("listar");
+      licencias = data.licencias || [];
+      if (data.firma === false) {
+        show($("licAviso"), "⚠️ El servidor todavía no tiene la clave de licencias (LICENCIAS_CLAVE_PRIVADA en el .env): no se pueden activar computadoras.");
+      } else {
+        hide($("licAviso"));
+      }
+      dibujarLicencias();
+    } catch (e) {
+      caja.textContent = "No pude cargar la lista: " + e.message;
+    }
+  }
+
+  function boton(texto, accion, clase) {
+    const b = document.createElement("button");
+    b.textContent = texto;
+    b.className = clase || "sec";
+    b.addEventListener("click", accion);
+    return b;
+  }
+
+  function linea(texto, clase) {
+    const d = document.createElement("div");
+    if (clase) d.className = clase;
+    d.textContent = texto;
+    return d;
+  }
+
+  function dibujarLicencias() {
+    const caja = $("licLista");
+    caja.textContent = "";
+    caja.className = "";
+    if (!licencias.length) { caja.className = "hint"; caja.textContent = "Todavía no hay licencias."; return; }
+    licencias.forEach((lic) => {
+      const item = document.createElement("div");
+      item.className = "lic";
+      const titulo = document.createElement("div");
+      const nombre = document.createElement("b");
+      nombre.textContent = lic.paciente;
+      titulo.appendChild(nombre);
+      if (lic.nota) titulo.appendChild(document.createTextNode(" · " + lic.nota));
+      item.appendChild(titulo);
+      item.appendChild(linea(agrupar(lic.codigo) + " · " + (lic.equipo
+        ? "activada el " + fecha(lic.activada) + " en el equipo " + agrupar(lic.equipo)
+        : "esperando activación (creada el " + fecha(lic.creada) + ")"), "gris"));
+      if (lic.anteriores && lic.anteriores.length) {
+        item.appendChild(linea("Antes en: " + lic.anteriores.map((a) => agrupar(a.equipo)).join(", "), "gris"));
+      }
+      const acciones = document.createElement("div");
+      acciones.className = "acciones";
+      if (lic.equipo) {
+        acciones.appendChild(boton("Descargar archivo", () => descargarLicencia(lic)));
+        acciones.appendChild(boton("Pasar a otro equipo", () => pasarLicencia(lic)));
+      } else {
+        acciones.appendChild(boton("Copiar código", () => copiar(agrupar(lic.codigo))));
+        if (!(lic.anteriores && lic.anteriores.length)) acciones.appendChild(boton("Borrar", () => borrarLicencia(lic)));
+      }
+      item.appendChild(acciones);
+      caja.appendChild(item);
+    });
+  }
+
+  async function copiar(texto) {
+    try {
+      await navigator.clipboard.writeText(texto);
+      show($("msgLic"), "Copiado: " + texto, "info");
+    } catch (e) {
+      show($("msgLic"), "No pude copiar; el código es " + texto, "info");
+    }
+  }
+
+  function mostrarCodigo(lic) {
+    const caja = $("licCodigo");
+    caja.textContent = "";
+    caja.appendChild(linea("Código de activación de " + lic.paciente, "hint"));
+    caja.appendChild(linea(agrupar(lic.codigo), "grande"));
+    caja.appendChild(boton("Copiar", () => copiar(agrupar(lic.codigo))));
+    caja.appendChild(linea("Escribilo en la ventana \"Activar\" del programa, en la computadora del paciente. "
+      + "Sirve para una sola computadora.", "hint"));
+    caja.className = "codigo on";
+  }
+
+  function descargarLicencia(lic) {
+    const nombre = "licencia-" + (lic.paciente.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "paciente") + "-" + lic.codigo + ".txt";
+    const blob = new Blob([lic.licencia + "\n"], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = nombre;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    return nombre;
+  }
+
+  $("btnLicCrear").addEventListener("click", async () => {
+    const paciente = $("licPaciente").value.trim();
+    hide($("msgLic"));
+    if (!paciente) { show($("msgLic"), "Escribí el nombre del paciente."); return; }
+    $("btnLicCrear").disabled = true;
+    try {
+      const data = await licPedir("crear", { paciente, nota: $("licNota").value.trim() });
+      mostrarCodigo(data.licencia);
+      $("licPaciente").value = ""; $("licNota").value = "";
+      cargarLicencias();
+    } catch (e) {
+      show($("msgLic"), "⚠️ " + e.message);
+    }
+    $("btnLicCrear").disabled = false;
+  });
+
+  $("btnLicArchivo").addEventListener("click", async () => {
+    const paciente = $("licPaciente").value.trim();
+    const equipo = $("licEquipo").value.trim();
+    hide($("msgLic"));
+    if (!paciente) { show($("msgLic"), "Escribí arriba el nombre del paciente."); return; }
+    if (!equipo) { show($("msgLic"), "Escribí el código del equipo que muestra el programa."); return; }
+    $("btnLicArchivo").disabled = true;
+    try {
+      const data = await licPedir("sin-internet", { paciente, nota: $("licNota").value.trim(), equipo });
+      const nombre = descargarLicencia(data.licencia);
+      $("licCodigo").className = "codigo";
+      show($("msgLic"), "✅ Descargado: " + nombre + ". Llevalo en un pendrive y abrilo desde la ventana "
+        + "\"Activar\" del programa (botón \"Abrir archivo de licencia…\").", "ok");
+      $("licPaciente").value = ""; $("licNota").value = ""; $("licEquipo").value = "";
+      cargarLicencias();
+    } catch (e) {
+      show($("msgLic"), "⚠️ " + e.message);
+    }
+    $("btnLicArchivo").disabled = false;
+  });
+
+  async function pasarLicencia(lic) {
+    if (!confirm("¿Pasar la licencia de " + lic.paciente + " a otro equipo?\n\nEl código " + agrupar(lic.codigo)
+      + " va a servir una vez más, en la computadora nueva. La computadora de ahora sigue funcionando: "
+      + "nunca se desactiva a distancia.")) return;
+    try {
+      await licPedir("pasar", { codigo: lic.codigo });
+      show($("msgLic"), "✅ Listo: el código " + agrupar(lic.codigo) + " ya sirve en la computadora nueva.", "ok");
+      cargarLicencias();
+    } catch (e) {
+      show($("msgLic"), "⚠️ " + e.message);
+    }
+  }
+
+  async function borrarLicencia(lic) {
+    if (!confirm("¿Borrar el código " + agrupar(lic.codigo) + " de " + lic.paciente + "? Nunca se usó.")) return;
+    try {
+      await licPedir("borrar", { codigo: lic.codigo });
+      show($("msgLic"), "Código borrado.", "info");
+      cargarLicencias();
+    } catch (e) {
+      show($("msgLic"), "⚠️ " + e.message);
+    }
+  }
 </script>
 </body>
 </html>

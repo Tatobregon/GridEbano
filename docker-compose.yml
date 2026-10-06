@@ -73,6 +73,29 @@ services:
       couchdb:
         condition: service_healthy   # espera el healthcheck: NO arranca hasta que couchdb esté listo
 
+  # Licencias de Controlador Ebano (el mouse con la mirada). Servicio APARTE del login del
+  # comunicador: si se cae, el Grid sigue igual (nginx lo busca recién cuando llega un pedido de
+  # licencias, y el frontend no depende de él). Sin puertos publicados: solo se llega por nginx
+  # (/licencias/ y /admin/licencias/). El registro va en la base "licencias-controlador" del mismo
+  # CouchDB, así entra en los backups de cada noche. Ver docs/licencias-controlador.md.
+  licencias:
+    build:
+      context: .
+      dockerfile: Dockerfile.licencias
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      COUCHDB_URL: http://couchdb:5984
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD}
+      ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD}   # la misma clave de acceso del panel
+      # Clave privada de las licencias (64 caracteres hex). Sin ella el servicio levanta igual, pero
+      # no activa licencias (el panel lo avisa).
+      LICENCIAS_CLAVE_PRIVADA: ${LICENCIAS_CLAVE_PRIVADA:-}
+    depends_on:
+      couchdb:
+        condition: service_healthy
+
   frontend:
     build:
       context: .

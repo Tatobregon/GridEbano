@@ -1,0 +1,9 @@
+# Servicio de licencias de Controlador Ebano: un solo archivo, sin dependencias (solo Node 22).
+# Va aparte de couch-auth a propósito: si falla, el login del comunicador sigue igual.
+FROM node:22-bookworm-slim
+WORKDIR /app
+COPY licencias/server.js /app/server.js
+# Corre como usuario sin privilegios (el que trae la imagen oficial de node), no como root.
+USER node
+EXPOSE 3100
+CMD ["node", "server.js"]

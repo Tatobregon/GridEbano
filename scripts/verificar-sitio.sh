@@ -41,6 +41,17 @@ chequear 404 GET  "/.git/config"                        "historia de git"
 chequear 404 GET  "/node_modules/"                      "dependencias de build"
 chequear 404 GET  "/Asterics-AAC-Data/no-existe.json"   "404 limpio en tableros"
 
+echo ""
+echo "Licencias de Controlador Ebano (servicio aparte: si falla, el Grid sigue igual):"
+chequear 200 GET  "/licencias/estado"                   "el servicio de licencias responde"
+chequear 403 POST "/admin/licencias/listar"             "sin la clave del panel no lista licencias"
+chequear 404 GET  "/couchdb/licencias-controlador/_all_docs" "el registro de licencias no se publica"
+if curl -s -m 20 "$URL/licencias/estado" 2>/dev/null | grep -q '"firma":true'; then
+  echo "  OK     el servidor tiene la clave para firmar licencias"
+else
+  echo "  AVISO  sin LICENCIAS_CLAVE_PRIVADA en el .env: no se pueden activar computadoras (docs/licencias-controlador.md)"
+fi
+
 case "$URL" in
   https://*)
     echo ""

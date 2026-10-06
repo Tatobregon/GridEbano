@@ -34,7 +34,8 @@ Navegador ──HTTPS──► [Caddy (solo prod) | Tailscale Funnel (local)] �
      /admin/*, /crear-usuario-ebano-soluciones → panel de admin (couch-auth): alta de usuarios
                                 y recuperación de comunicadores (.grd)
      /couchdb/<base de usuario> → couchdb:5984   (/couchdb/_* → 404: sin Fauxton ni _session públicos)
-     /user/*, /api/*, /.git, /node_modules → 404
+     /licencias/*, /admin/licencias/* → licencias:3100 (Controlador Ebano; resuelto en cada pedido)
+     /couchdb/licencias-controlador, /user/*, /api/*, /.git, /node_modules → 404
 ```
 
 Servicios en `docker-compose.yml` (proyecto con `name: asterics-grid` fijo):
@@ -42,13 +43,17 @@ Servicios en `docker-compose.yml` (proyecto con `name: asterics-grid` fijo):
   `asterics-grid_couchdb-data`. Puerto solo en 127.0.0.1:5984.
 - **couch-auth** (node:22, `superlogin/start.js` del upstream + patches) — login, crea las bases de
   usuario, endpoints del panel de admin. Monta `./backups/historial:/historial:ro`. 127.0.0.1:3000.
+- **licencias** (node:22, `licencias/server.js`, sin dependencias) — licencias de Controlador Ebano
+  (el mouse con la mirada): códigos de activación, firma Ed25519 y registro en la base
+  `licencias-controlador`. Sin puertos publicados. Ver `docs/licencias-controlador.md`.
 - **frontend** (nginx:stable-alpine) — app + reverse proxy. 127.0.0.1:9095.
 - **caddy** (caddy:2, **perfil `prod`**) — HTTPS automático. Solo arranca con `COMPOSE_PROFILES=prod`
   en el `.env` (el server). Puertos públicos 80/443.
 
 Configuración por entorno en `.env` (no versionado; plantilla en `.env.example`):
 `COUCHDB_PASSWORD`, `REGISTER_SECRET`, `ADMIN_UI_PASSWORD` (solo letras y números: van dentro de
-URLs), `AUTH_BASE_URL` (https://dominio, sin barra final; se HORNEA en el bundle), `ASTERICS_VERSION`,
+URLs), `LICENCIAS_CLAVE_PRIVADA` (64 hex; NO se genera en el server: sale de la PC de Ebano),
+`AUTH_BASE_URL` (https://dominio, sin barra final; se HORNEA en el bundle), `ASTERICS_VERSION`,
 y en prod `COMPOSE_PROFILES=prod`, `SITE_DOMAIN`, `ACME_EMAIL`, `RCLONE_DESTINO`, `BACKUP_PING_URL`.
 `DB_SERVER_PUBLIC_URL` ya no va en el `.env`: el compose la arma como `${AUTH_BASE_URL}/couchdb/`.
 
@@ -77,6 +82,12 @@ y en prod `COMPOSE_PROFILES=prod`, `SITE_DOMAIN`, `ACME_EMAIL`, `RCLONE_DESTINO`
    `update_seq` contra el volcado anterior más cercano). Retención 30 días contados desde el volcado
    más nuevo de cada usuario, y **nunca se borra el último**. couch-auth monta esa carpeta `:ro`;
    quien escribe es un contenedor descartable. Ver `docs/runbook-prod.md`.
+8. **Licencias de Controlador Ebano en un servicio APARTE** (`licencias`), no metido en couch-auth:
+   si falla, el login y el sync del comunicador no se enteran. Una computadora se activa una vez con
+   un código de 8 caracteres del panel (la clave del panel nunca se escribe en la PC del paciente);
+   la licencia va firmada (Ed25519), no vence y no se desactiva a distancia. La clave privada vive en
+   el `.env` y en el pendrive de Ebano; nunca en git (este repo es público). Ver
+   `docs/licencias-controlador.md`.
 
 ## Modificaciones al upstream (todas en tiempo de build, sin fork)
 
@@ -144,16 +155,30 @@ Runtime en `node:22-bookworm-slim`, usuario `node`.
 - **El CouchDB temporal de `historial-desde-tgz.sh` usa la MISMA imagen que producción** (couchdb:3.4)
   porque el nombre de nodo tiene que coincidir con el de los datos del backup; si no, las bases no
   se montan. El script lo detecta (chequea que aparezca `auth-users`) y saltea ese backup.
+- **Las locations de licencias usan `resolver 127.0.0.11` + variable en `proxy_pass`**: así nginx
+  resuelve `licencias` en cada pedido y ARRANCA aunque ese servicio esté caído. Con un
+  `proxy_pass http://licencias:3100` fijo, un servicio de licencias caído tiraría todo el sitio.
+  No agregar `licencias` al `depends_on` del frontend, por lo mismo.
+- **`/licencias/` responde 429 cuando se insiste** (`limit_req_status 429`): el programa lo muestra
+  como "demasiados intentos". Las demás zonas siguen con el 503 por defecto de nginx.
+- **La base `licencias-controlador` tiene `_security` solo admin** (la pone el servicio al arrancar)
+  y además nginx devuelve 404 en `/couchdb/licencias-controlador`.
+- **La licencia que firma el servidor tiene que ser idéntica a la del programa** para los mismos
+  datos (orden de los campos del JSON incluido): `scripts/test-licencias.js` y `tests/test_license.py`
+  del repo del programa esperan el mismo texto.
 
 ## Archivos
 
 ```
-docker-compose.yml        stack (couchdb, couch-auth, frontend, caddy[prod])
+docker-compose.yml        stack (couchdb, couch-auth, licencias, frontend, caddy[prod])
 Dockerfile.frontend       build del frontend con todas las modificaciones
 Dockerfile.couchauth      couch-auth + patches
+Dockerfile.licencias      servicio de licencias de Controlador Ebano
+licencias/server.js       ese servicio (un archivo, sin dependencias)
 caddy/Caddyfile           HTTPS de producción
 nginx/default.conf        puerta única: proxy, lista blanca de rutas, headers, rate limits, IP real
 nginx/admin-crear-usuario.html   panel de admin: alta de usuarios + recuperar comunicador (.grd)
+                                 + licencias de Controlador Ebano
 couchdb-config/docker.ini single-node (sin CORS: todo es same-origin)
 locks/                    package-lock.json congelados (frontend y couch-auth)
 scripts/lib.sh            funciones comunes de los scripts
@@ -167,7 +192,9 @@ scripts/historial-desde-tgz.sh     rellena el historial a partir de los .tgz ya 
 scripts/test-recuperar-comunicador.js   prueba el descifrado y el armado del .grd (sin stack)
 scripts/test-endpoints-admin.js         prueba los endpoints de admin contra un CouchDB simulado
 scripts/test-dump-usuarios.js           prueba el volcado: cambios, retención, nada descifrado
+scripts/test-licencias.js               prueba el servicio de licencias contra un CouchDB simulado
 docs/runbook-prod.md      despliegue y operación en DonWeb (paso a paso)
+docs/licencias-controlador.md   licencias de Controlador Ebano: puesta en marcha, uso, qué pasa si...
 docs/checklist-operacion.md   rescate en la PC local
 avances/                  estado del proyecto, auditorías y revisiones
 ```
