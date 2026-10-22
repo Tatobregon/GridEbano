@@ -105,7 +105,7 @@ services:
         AUTH_BASE_URL: "${AUTH_BASE_URL}"   # URL pública del sitio (se hornea en el bundle). Por entorno, en .env
         # Versión visible en "Acerca de" + nombre del cache del service worker. Al cambiar el frontend,
         # SUBILA (en .env) para que los navegadores tomen la versión nueva.
-        ASTERICS_VERSION: "${ASTERICS_VERSION:-localdev-15}"
+        ASTERICS_VERSION: "${ASTERICS_VERSION:-localdev-16}"
         # Repo de tableros self-hosteado, pineado a un commit (desacople total de asterics.github.io).
         # Para actualizar los tableros: cambiar este SHA y rebuildear el frontend.
         BOARDS_COMMIT: "6c0f0017fd45ebc579cbd79b33eb8f57433cc646"

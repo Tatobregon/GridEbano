@@ -103,7 +103,11 @@ los patches `.js` abortan si no encuentran su ancla):
 5. Placeholders de entorno → `PROD` + versión.
 6. Patches JS (`scripts/patch-*.js`): link a la fuente en "Acerca de" (AGPL), limpieza del SW,
    neutralización de podcast/CORS-proxy de la fundación, UI solo-login (sin registro ni usuario
-   offline), reloj de dwell en hovering, branding EBANO, quitar "Acerca de" y "Ayuda" del menú.
+   offline), reloj de dwell en hovering, branding EBANO, quitar "Acerca de" y "Ayuda" del menú, y
+   voces naturales de **Voces Ebano** (`patch-voz-local.js`, paso 1l): la URL del servicio de voz
+   externo (`http://127.0.0.1:5555`) por defecto solo dentro de Comunicador Ebano, reintento si las
+   voces arrancan después que el comunicador, voz del sistema si no responden, volumen respetado y la
+   voz elegida no se pierde.
 7. `node_modules/` y `.git/` se borran antes de copiar al nginx (no se publican).
 
 `Dockerfile.couchauth`: `patch-couchauth.js` (guard de registro) y `patch-admin-endpoints.js`
@@ -163,6 +167,12 @@ Runtime en `node:22-bookworm-slim`, usuario `node`.
   como "demasiados intentos". Las demás zonas siguen con el 503 por defecto de nginx.
 - **La base `licencias-controlador` tiene `_security` solo admin** (la pone el servicio al arrancar)
   y además nginx devuelve 404 en `/couchdb/licencias-controlador`.
+- **La URL de las voces va por defecto SOLO dentro de Comunicador Ebano** (lo reconoce por
+  `window.chrome.webview`, que trae su motor de Edge). En Chrome/Edge común, que la página pública le
+  pida algo a 127.0.0.1 muestra el permiso de "acceso a la red local" (Chrome 142+) a cada usuario;
+  Comunicador Ebano lo concede solo. Voces Ebano (el programa de las voces, repo Mouse-Tracker) solo
+  atiende al origen del comunicador (`origenes_permitidos` en su `voz/voces.json`): **si cambia el
+  dominio, hay que cambiarlo también ahí**, o las voces responden 403 y se oye la voz del sistema.
 - **La licencia que firma el servidor tiene que ser idéntica a la del programa** para los mismos
   datos (orden de los campos del JSON incluido): `scripts/test-licencias.js` y `tests/test_license.py`
   del repo del programa esperan el mismo texto.

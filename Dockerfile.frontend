@@ -102,6 +102,16 @@ RUN node /tmp/patch-creditos.js
 COPY scripts/patch-remove-nav-about-help.js /tmp/patch-remove-nav-about-help.js
 RUN node /tmp/patch-remove-nav-about-help.js
 
+# (1l) Voces Ebano: voces naturales SIN internet (un programa aparte, instalado en cada PC, en
+# 127.0.0.1:5555). La URL del servicio de voz externo viene puesta, pero SOLO dentro de Comunicador Ebano
+# (en Chrome/Edge común no: ahí aparecería el permiso de "acceso a la red local"). Reintento si Grid
+# arranca antes que las voces, FALLBACK a la voz del sistema si no responden (upstream se queda mudo),
+# volumen respetado y la voz elegida no se pierde. Ver scripts/patch-voz-local.js.
+# EBANO_VOZ_URL vacío = sin URL por defecto (se configura a mano en los ajustes del comunicador).
+ARG EBANO_VOZ_URL=http://127.0.0.1:5555
+COPY scripts/patch-voz-local.js /tmp/patch-voz-local.js
+RUN EBANO_VOZ_URL="${EBANO_VOZ_URL}" node /tmp/patch-voz-local.js
+
 # (2) Entorno PROD + versión (la versión invalida el cache del service worker al actualizar)
 RUN sed -i "s/#ASTERICS_GRID_ENV#/PROD/g"            src/js/util/constants.js \
     && sed -i "s/#ASTERICS_GRID_VERSION#/${ASTERICS_VERSION}/g" src/js/util/constants.js \
