@@ -112,12 +112,12 @@ services:
     restart: unless-stopped
     logging: *logging
     ports:
-      - "127.0.0.1:9095:80"   # local: el Funnel apunta acá. Server: solo para chequeos desde el propio server
+      - "127.0.0.1:9095:80"   # PC: la app en http://localhost:9095. Server: solo para chequeos desde el propio server
     depends_on: [couch-auth]
 
   # HTTPS de producción: Caddy saca y renueva solo el certificado de Let's Encrypt para SITE_DOMAIN y
   # le pasa todo al nginx del frontend. Solo arranca con el perfil "prod" (en el .env del server:
-  # COMPOSE_PROFILES=prod). En la PC local no se levanta (ahí el HTTPS lo pone el Funnel).
+  # COMPOSE_PROFILES=prod). En la PC local no se levanta.
   caddy:
     image: caddy:2
     profiles: ["prod"]

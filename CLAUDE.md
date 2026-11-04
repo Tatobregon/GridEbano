@@ -16,10 +16,17 @@ mano, solo cuando una versión nueva esté probada.
 
 ## Fase actual
 
-- **Local (PC Windows + Docker Desktop + Git Bash):** entorno de pruebas, expuesto con Tailscale
-  Funnel. Sin Caddy.
-- **Producción:** migrando a un **Cloud Server de DonWeb** (Ubuntu 24.04) con dominio propio y HTTPS
-  vía Caddy. La guía paso a paso es `docs/runbook-prod.md`.
+- **Producción: EN MARCHA desde el 23/09/2026**, en https://comunicador.ebano-soluciones.com.ar,
+  sobre un Cloud Server de DonWeb (Ubuntu 24.04) con HTTPS vía Caddy. **Ya tiene usuarios reales**:
+  todo lo que toque el servidor se hace con cuidado. El despliegue y la operación están en
+  `docs/runbook-prod.md`.
+- **Local (PC Windows + Docker Desktop + Git Bash):** entorno de pruebas, sin Caddy y sin nada
+  publicado a internet (solo `http://localhost:9095`).
+
+> **Para retomar el trabajo, empezá por [`avances/estado-2026-11-04.md`](avances/estado-2026-11-04.md):**
+> dónde estamos, qué falta, el plan de acción abierto y cómo verificar el estado real del
+> servidor. Este archivo (CLAUDE.md) explica **cómo** está armado el sistema; ese otro, **dónde**
+> estamos parados.
 
 La **app que ven los usuarios quedó como se quiere** (branding, reloj de dwell, solo-login, tableros
 propios). Los cambios de infraestructura no deben alterar ese comportamiento visible.
@@ -27,7 +34,7 @@ propios). Los cambios de infraestructura no deben alterar ese comportamiento vis
 ## Arquitectura (igual en local y en prod)
 
 ```
-Navegador ──HTTPS──► [Caddy (solo prod) | Tailscale Funnel (local)] ──► nginx (servicio frontend, :80)
+Navegador ──HTTPS──► Caddy (solo prod; en la PC, directo a localhost:9095) ──► nginx (servicio frontend, :80)
    nginx = puerta única, same-origin:
      /                          → build estático de AsTeRICS Grid + mirror de tableros /Asterics-AAC-Data/
      /auth/login|logout|logout-all|refresh → couch-auth:3000   (resto de /auth/ → 404)
@@ -88,6 +95,8 @@ y en prod `COMPOSE_PROFILES=prod`, `SITE_DOMAIN`, `ACME_EMAIL`, `RCLONE_DESTINO`
    la licencia va firmada (Ed25519), no vence y no se desactiva a distancia. La clave privada vive en
    el `.env` y en el pendrive de Ebano; nunca en git (este repo es público). Ver
    `docs/licencias-controlador.md`.
+9. **No se borran usuarios** (decidido el 04/11/2026, ya con usuarios reales). Tampoco los de prueba.
+   `scripts/borrar-usuario.sh` sigue en el repo, pero no se usa.
 
 ## Modificaciones al upstream (todas en tiempo de build, sin fork)
 
@@ -176,6 +185,10 @@ Runtime en `node:22-bookworm-slim`, usuario `node`.
 - **La licencia que firma el servidor tiene que ser idéntica a la del programa** para los mismos
   datos (orden de los campos del JSON incluido): `scripts/test-licencias.js` y `tests/test_license.py`
   del repo del programa esperan el mismo texto.
+- **El firewall que cuenta es el del panel de DonWeb**: está por delante del server y bloquea todo lo
+  que no tenga regla. `ufw` queda inactivo después de cada reinicio (su servicio no arranca solo), así
+  que `ufw status` no dice qué está expuesto: para eso hay que mirar el panel. No se activa `ufw` a
+  propósito: no agrega protección y Docker se lo saltea igual.
 
 ## Archivos
 
@@ -206,5 +219,6 @@ scripts/test-licencias.js               prueba el servicio de licencias contra u
 docs/runbook-prod.md      despliegue y operación en DonWeb (paso a paso)
 docs/licencias-controlador.md   licencias de Controlador Ebano: puesta en marcha, uso, qué pasa si...
 docs/checklist-operacion.md   rescate en la PC local
-avances/                  estado del proyecto, auditorías y revisiones
+avances/estado-2026-11-04.md   ESTADO ACTUAL + plan de acción abierto (leer al retomar)
+avances/                  historial: estados anteriores, auditorías y revisiones
 ```

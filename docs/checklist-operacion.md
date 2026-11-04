@@ -1,6 +1,6 @@
 # Checklist de operación — AsTeRICS Grid (servidor local)
 
-> Esta guía es para la **PC local** (Git Bash + Docker Desktop + Funnel). Para el server de
+> Esta guía es para la **PC local** (Git Bash + Docker Desktop). Para el server de
 > producción, ver `docs/runbook-prod.md` (secciones "Operación diaria" y "Si algo falla").
 
 Guía rápida para operar el servidor y para rescatarlo si algo falla. Tenela a mano.
@@ -11,9 +11,9 @@ Guía rápida para operar el servidor y para rescatarlo si algo falla. Tenela a 
 
 | Cosa | Valor / comando |
 |---|---|
-| URL pública | **https://pc-tato.taila78f74.ts.net** |
+| URL local | **http://localhost:9095** |
 | **Arrancar TODO** | `./scripts/arrancar.sh` |
-| Estado | `docker compose ps` y `"/c/Program Files/Tailscale/tailscale.exe" funnel status` |
+| Estado | `docker compose ps` |
 | Apagar (datos quedan) | `docker compose down` |
 | Crear usuario | `./scripts/crear-usuario.sh <usuario> <clave 8+>` |
 | Backup (local + **offsite** a Google Drive) | `./scripts/backup-offsite.sh` |
@@ -36,7 +36,7 @@ registro (`REGISTER_SECRET`). No hace falta memorizarlos; los scripts los leen s
 3. **Backup antes de algo importante:** `./scripts/backup.sh`.
 4. **Apagar al final del día (opcional):** `docker compose down`. Los datos quedan en el volumen.
 
-> **Recordá:** el servicio solo anda con **la PC prendida y Docker Desktop corriendo**.
+> **Recordá:** esta copia local solo anda con **la PC prendida y Docker Desktop corriendo**. Producción no depende de esta PC.
 
 ---
 
@@ -44,7 +44,7 @@ registro (`REGISTER_SECRET`). No hace falta memorizarlos; los scripts los leen s
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| La web no carga desde ningún lado | Docker apagado o Funnel caído | Corré **`./scripts/arrancar.sh`** (arranca Docker + todo + Funnel) |
+| La web no carga | Docker apagado | Corré **`./scripts/arrancar.sh`** (arranca Docker + todo) |
 | Después de reiniciar la PC | Todo apagado | Corré **`./scripts/arrancar.sh`** |
 | La nube queda en **X** / no sincroniza / se cuelga cargando | Red de Docker desalineada | `docker compose down && docker compose up -d`, luego `./scripts/arrancar.sh` |
 | "No se pudo verificar el nombre de usuario" en la UI | Falta la vista `view-usernames` | `./scripts/arrancar.sh` la recrea |
@@ -52,7 +52,6 @@ registro (`REGISTER_SECRET`). No hace falta memorizarlos; los scripts los leen s
 | couchdb en `Restarting` | `docker.ini` con `[admins]` de una clave vieja | Borrá la sección `[admins]` de `couchdb-config/docker.ini` y `docker compose up -d` |
 | El navegador muestra una versión vieja | Service worker cacheado | F12 → Application → Service Workers → **Unregister** → recargar |
 | El script de crear-usuario da error de secreto | Stack apagado | Prendé todo con `arrancar.sh` y reintentá |
-| No entra desde afuera pero sí local | Funnel apagado | `"/c/Program Files/Tailscale/tailscale.exe" funnel --bg --https=443 9095` |
 | Registro público "no anda" (da 403) | **Es a propósito** | El registro está cerrado; los usuarios los creás vos con el script |
 
 **Ver qué está roto:**

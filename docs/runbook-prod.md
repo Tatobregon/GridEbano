@@ -1,6 +1,6 @@
 # Despliegue en producción — Cloud Server de DonWeb (paso a paso)
 
-Guía para pasar la app de la PC (Tailscale Funnel) a un servidor propio en DonWeb, con dominio,
+Guía para poner la app en un servidor propio en DonWeb, con dominio,
 HTTPS, la base de datos en el server y backups en dos capas (locales + Copias de Seguridad de DonWeb). Está pensada para ir
 **de a poco**: cada paso dice qué hacés, el comando exacto, **qué tenés que ver** y **qué hacer si
 no pasa eso**. No avances de paso si el anterior no dio lo esperado.
@@ -96,7 +96,7 @@ con todo en `OK`. La primera vez tarda 10-15 minutos.
 
 ### 1.3 Probar que la app quedó igual
 
-Abrí la URL del Funnel y recargá con `Ctrl+F5` (la primera vez).
+Abrí http://localhost:9095 y recargá con `Ctrl+F5` (la primera vez).
 
 - Logo EBANO y pantalla solo de login.
 - Entrás con tu usuario de prueba y la nube queda en verde.
@@ -504,14 +504,12 @@ Cada backup exitoso avisa ahí. Si una noche no llega el aviso, te llega un mail
 
 ## Fase 9 — Después (no bloquea el lanzamiento)
 
-- [ ] **Apagar la PC como servidor:** en la PC, `"/c/Program Files/Tailscale/tailscale.exe" funnel reset`
-      y `docker compose down`. Sacar la URL del Funnel de los docs.
 - [ ] **Monitoreo de caída:** un check HTTP gratuito (UptimeRobot o similar) contra
       `https://app.tudominio.com.ar/`, con aviso por mail.
 - [ ] **Decidir el ícono de sync** según lo que viste en el test de caída.
 - [ ] **Script de restore por usuario** (recuperar lo que borró una persona sin tocar a las demás).
 - [ ] Link visible al código fuente (AGPL) fuera de "Acerca de".
-- [ ] Borrar los usuarios de prueba cuando ya no hagan falta: `./scripts/borrar-usuario.sh prueba1`.
+- **No borrar usuarios:** desde el 04/11/2026 hay usuarios reales y se decidió no eliminar ninguno, tampoco los de prueba.
 
 ---
 

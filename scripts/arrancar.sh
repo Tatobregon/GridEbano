@@ -1,7 +1,7 @@
 #!/bin/bash
 # Levanta TODO el stack, inicializa lo que haga falta y verifica que responda.
 # Uso:  ./scripts/arrancar.sh
-#   - En la PC (Git Bash): arranca Docker Desktop si hace falta y configura el Tailscale Funnel.
+#   - En la PC (Git Bash): arranca Docker Desktop si hace falta. No publica nada: solo http://localhost:9095.
 #   - En el server (Linux): levanta también Caddy (HTTPS) si el .env tiene COMPOSE_PROFILES=prod.
 # Es idempotente: se puede correr siempre; no toca los datos.
 # Si algo falla, mirá docs/checklist-operacion.md
@@ -52,22 +52,8 @@ compose restart frontend >/dev/null
 echo "      Bases y vista OK; couch-auth y frontend reiniciados."
 
 echo "[5/6] Acceso público..."
-TAILSCALE=""
 if es_windows; then
-  for t in "/c/Program Files/Tailscale/tailscale.exe" "/c/Program Files (x86)/Tailscale/tailscale.exe" "$(command -v tailscale 2>/dev/null)"; do
-    [ -n "$t" ] && [ -x "$t" ] && TAILSCALE="$t" && break
-  done
-  if [ -n "$TAILSCALE" ]; then
-    if "$TAILSCALE" funnel status 2>/dev/null | grep -q "9095"; then
-      echo "      Funnel ya estaba activo."
-    else
-      "$TAILSCALE" funnel --bg --https=443 9095 >/dev/null 2>&1 \
-        && echo "      Funnel configurado." \
-        || echo "      AVISO: no pude configurar el Funnel (¿Tailscale logueado y Funnel habilitado en el admin?)."
-    fi
-  else
-    echo "      Tailscale no encontrado en esta PC: la app queda accesible solo en http://localhost:9095"
-  fi
+  echo "      En la PC no se publica nada: la app queda accesible solo en http://localhost:9095"
 else
   if compose ps --services --status running 2>/dev/null | grep -qx caddy; then
     echo "      Caddy corriendo (HTTPS). La primera vez tarda ~1 min en sacar el certificado."
@@ -112,8 +98,7 @@ if [ "$WEB" = "200" ] && [ "$DB" = "200" ]; then
   echo ""
   echo "  Chequeo completo:  ./scripts/verificar-sitio.sh"
 elif es_windows; then
-  echo "  EL STACK ANDA en http://localhost:9095 , pero la URL pública no responde."
-  echo "  En esta PC eso pasa si Tailscale no está instalado o el Funnel está apagado."
+  echo "  EL STACK ANDA en http://localhost:9095 , pero $URL no responde."
   echo "  OJO: la app usa $URL para el login, así que para probar login y sync"
   echo "  desde ESTA PC hay que poner AUTH_BASE_URL=http://localhost:9095 en el .env y rebuildear:"
   echo "     docker compose up -d --build frontend && ./scripts/arrancar.sh"

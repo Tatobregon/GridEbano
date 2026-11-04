@@ -58,7 +58,7 @@ case "$URL" in
     echo "HTTPS:"
     HTTP_URL="http://${URL#https://}"
     cod=$(curl -s -o /dev/null -m 20 -w "%{http_code}" "$HTTP_URL/" 2>/dev/null || true)
-    case "$cod" in 301|302|307|308) echo "  OK     $cod  http:// redirige a https://";; *) echo "  AVISO  $cod  http:// no redirige a https:// (en la PC con Funnel es normal)";; esac
+    case "$cod" in 301|302|307|308) echo "  OK     $cod  http:// redirige a https://";; *) echo "  AVISO  $cod  http:// no redirige a https://";; esac
     if curl -s -D - -o /dev/null -m 20 "$URL/" 2>/dev/null | grep -qi '^strict-transport-security'; then
       echo "  OK     HSTS presente"
     else

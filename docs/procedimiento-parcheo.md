@@ -42,11 +42,12 @@ Hace, en orden y verificando:
    `nginx:stable-alpine` y `alpine:3`, y rebuildea. Las dependencias npm NO cambian (`locks/`).
    (Control extra cada tanto: que esos tags se sigan republicando en Docker Hub. `node:18` y
    `nginx:1.27` dejaron de actualizarse en 2025 y por eso se cambiaron en 2026-09.)
-3. Levanta y corre `arrancar.sh` (init + Funnel/Caddy + verificación web/sync).
+3. Levanta y corre `arrancar.sh` (init + Caddy + verificación web/sync).
 4. Anota la fecha en `avances/parcheos.log`.
+5. Borra la caché de build.
 
-> Si hay imágenes nuevas, el rebuild del frontend es completo (clona el repo + webpack + re-baja los
-> ~285 MB de tableros solo si cambió `alpine`) y tarda ~10 min. Si no hay nada nuevo, usa cache y es rápido.
+> El rebuild del frontend es completo (clona el repo + webpack + re-baja los
+> ~285 MB de tableros) y tarda ~10-20 min, porque el parcheo anterior borró la caché de build. El servicio sigue andando mientras compila.
 
 **Si algo quedó mal después de parchear:** restaurá el backup que se hizo al principio:
 ```bash
@@ -72,8 +73,8 @@ Cuando quieras adoptar un release nuevo del upstream:
 
 ## Notas
 
-- La etapa `boards` ya usa `alpine:3` + git, así que un parche de Node no obliga a re-bajar los
-  ~285 MB de tableros.
+- La etapa `boards` usa `alpine:3` + git: una imagen mínima, solo para bajar los ~285 MB de
+  tableros.
 - **Al cambiar `ASTERICS_TAG`** hay que regenerar los lockfiles de `locks/` (el `package.json` del
   upstream puede cambiar): en una copia de prueba, `npm install` sobre el tag nuevo, copiar el
   `package-lock.json` resultante a `locks/frontend-package-lock.json` y `locks/couchauth-package-lock.json`,
