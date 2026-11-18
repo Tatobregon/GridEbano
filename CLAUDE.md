@@ -112,7 +112,8 @@ los patches `.js` abortan si no encuentran su ancla):
 5. Placeholders de entorno → `PROD` + versión.
 6. Patches JS (`scripts/patch-*.js`): link a la fuente en "Acerca de" (AGPL), limpieza del SW,
    neutralización de podcast/CORS-proxy de la fundación, UI solo-login (sin registro ni usuario
-   offline), reloj de dwell en hovering, branding EBANO, quitar "Acerca de" y "Ayuda" del menú, y
+   offline), indicador de dwell en hovering (reloj, círculo o cortinas, con el color que elija cada
+   usuario; se guarda en `InputConfig`), branding EBANO, quitar "Acerca de" y "Ayuda" del menú, y
    voces naturales de **Voces Ebano** (`patch-voz-local.js`, paso 1l): la URL del servicio de voz
    externo (`http://127.0.0.1:5555`) por defecto solo dentro de Comunicador Ebano, reintento si las
    voces arrancan después que el comunicador, voz del sistema si no responden, volumen respetado y la

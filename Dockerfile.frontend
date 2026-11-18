@@ -80,9 +80,10 @@ RUN node /tmp/patch-remove-foundation-features.js
 COPY scripts/patch-remove-register-ui.js /tmp/patch-remove-register-ui.js
 RUN node /tmp/patch-remove-register-ui.js
 
-# (1i) Indicador visual de dwell: al posar el mouse sobre un elemento (hovering/"superposición"),
-# un círculo se va llenando (tipo reloj) durante el tiempo de dwell hasta que se dispara el click.
-# Puro CSS, enganchado al ciclo de vida existente de hovering.js. Ver scripts/patch-hover-clock.js.
+# (1i) Indicador visual de dwell: al posar el mouse sobre un elemento (hovering/"superposición"), un
+# indicador se va llenando durante el tiempo de dwell hasta que se dispara el click: reloj (por
+# defecto), círculo que crece o cortinas, con el color que elija cada usuario en la ventana de
+# mouse/táctil. Puro CSS, enganchado a hovering.js. Ver scripts/patch-hover-clock.js.
 COPY scripts/patch-hover-clock.js /tmp/patch-hover-clock.js
 RUN node /tmp/patch-hover-clock.js
 
